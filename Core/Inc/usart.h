@@ -41,7 +41,8 @@ extern UART_HandleTypeDef huart1;
 void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-  void UART1_Receive_Start();
+  void UART1_Receive_Start(void);
+  uint8_t UART1_Read_Byte(uint8_t *byte);
 #define UART_RX_BUF_SIZE 32
   extern uint8_t uart_rx_buf[UART_RX_BUF_SIZE];
 /* USER CODE END Prototypes */

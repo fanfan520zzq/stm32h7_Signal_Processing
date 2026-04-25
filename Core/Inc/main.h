@@ -31,18 +31,12 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "cmsis_os2.h"
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-extern  osMessageQueueId_t MSGQueueHandle;
-extern  osMessageQueueId_t UARTQueueHandle;
-extern  osSemaphoreId_t FreqSEMHandle;
-extern  osSemaphoreId_t ADCSEMHandle;
-extern  osSemaphoreId_t FFTSEMHandle;
-extern  osSemaphoreId_t ADCFinishedSemHandle;
-extern  osSemaphoreId_t LCDSEMHandle;
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

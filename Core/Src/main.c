@@ -112,13 +112,26 @@ int main(void)
   MX_ADC2_Init();
   MX_TIM13_Init();
   /* USER CODE BEGIN 2 */
-
+  extern void UART1_Receive_Start(void);
+  UART1_Receive_Start();
+  extern void CMD_Init(void);
+  CMD_Init();
+  extern void FFT_Init(void);
+  FFT_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  extern void UART_Poll(void);
+  extern void CMD_Poll(void);
+  extern void ADC_Poll(void);
+  extern void FFT_Poll(void);
   while (1)
   {
+      UART_Poll();
+      CMD_Poll();
+      ADC_Poll();
+      FFT_Poll();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

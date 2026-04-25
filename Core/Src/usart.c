@@ -190,29 +190,45 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
+#define RING_BUF_SIZE 256
+volatile uint8_t ring_buf[RING_BUF_SIZE];
+volatile uint16_t ring_head = 0;
+volatile uint16_t ring_tail = 0;
+
 uint8_t uart_rx_buf[UART_RX_BUF_SIZE] \
     __attribute__((section(".dma_buffer"))) \
     __attribute__((aligned(32)));
 
 void UART1_Receive_Start(void) {
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, uart_rx_buf, UART_RX_BUF_SIZE);
-  // 关闭半满中断，只要完成中断
+  // Disable half transfer interrupt
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
   if (huart->Instance == USART1) {
-    // DCache 失效
+    // Invalidate DCache
     SCB_InvalidateDCache_by_Addr((uint32_t*)uart_rx_buf, UART_RX_BUF_SIZE);
 
-    // 把收到的字节逐个放进队列
+    // Copy received bytes to software ring buffer
     for (uint16_t i = 0; i < Size; i++) {
-      osMessageQueuePut(UARTQueueHandle, &uart_rx_buf[i], 0, 0);
+        uint16_t next_head = (ring_head + 1) % RING_BUF_SIZE;
+        if (next_head != ring_tail) {
+            ring_buf[ring_head] = uart_rx_buf[i];
+            ring_head = next_head;
+        }
     }
 
-    // 重新启动接收
+    // Restart DMA reception
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, uart_rx_buf, UART_RX_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   }
+}
+
+uint8_t UART1_Read_Byte(uint8_t *byte) {
+    if (ring_head == ring_tail) return 0;
+    *byte = ring_buf[ring_tail];
+    ring_tail = (ring_tail + 1) % RING_BUF_SIZE;
+    return 1;
 }
 /* USER CODE END 1 */

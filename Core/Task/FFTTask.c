@@ -136,28 +136,31 @@ int __io_putchar(int ch)
 }
 
 /* =========================================================================
- * Public: FreeRTOS task entry
+ * Public: Polling entry
  * ========================================================================= */
 
-void StartFFTTask(void *argument)
-{
-    (void)argument;
+extern uint8_t fft_ready_flag;
+extern uint8_t start_adc_flag;
+static arm_rfft_fast_instance_f32 fft_inst;
 
+void FFT_Init(void)
+{
     /* One-time initialisation */
     FFT_HanningInit();
 
-    arm_rfft_fast_instance_f32 fft_inst;
     arm_rfft_fast_init_f32(&fft_inst, LEN);
 
     memset(&g_ch1_result, 0, sizeof(Channel_Result_t));
     memset(&g_ch2_result, 0, sizeof(Channel_Result_t));
+}
 
-    while (1)
+void FFT_Poll(void)
+{
+    if (fft_ready_flag)
     {
-        /* Step 1 – Wait for ADC frame */
-        osSemaphoreAcquire(FFTSEMHandle, osWaitForever);
+        fft_ready_flag = 0;
 
-        /* Step 2 – Statistics (min / max / mid) */
+        /* Step 2 鈥?Statistics (min / max / mid) */
         g_ch1_result.stat = FFT_ComputeStats(CH1_Buffer, LEN);
         g_ch2_result.stat = FFT_ComputeStats(CH2_Buffer, LEN);
 
@@ -188,8 +191,8 @@ void StartFFTTask(void *argument)
         if (ch1_dead && ch2_dead)
         {
             FFT_UpdateLCD();
-            if (g_is_adc_continuous == 1) osSemaphoreRelease(ADCSEMHandle);
-            continue;
+            if (g_is_adc_continuous == 1) start_adc_flag = 1;
+            return;
         }
 
         /* Step 3 – Frequency via zero-crossing (live channels only) */
@@ -267,7 +270,7 @@ void StartFFTTask(void *argument)
         /* Step 10 – Release ADC for next acquisition */
         if (g_is_adc_continuous == 1)
         {
-            osSemaphoreRelease(ADCSEMHandle);
+            start_adc_flag = 1;
         }
     }
 }

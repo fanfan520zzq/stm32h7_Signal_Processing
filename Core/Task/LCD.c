@@ -101,7 +101,7 @@ void LCD_Update_Waves(uint8_t Type, uint16_t Amplitude, uint8_t CH, float freq) 
 
     // 发送波形数据
     lcd_cmd("addt %d,%d,%d", LCD_COMP_WAVE, CH, LCD_WAVE_POINTS);
-    osDelay(10);
+    HAL_Delay(10);
     // 3. 发原始字节（    无 \xFF 分隔符） 没问题
     lcd_send_raw(wave_buffer, LCD_WAVE_POINTS);
     int a=1;
