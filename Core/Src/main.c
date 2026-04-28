@@ -21,6 +21,7 @@
 #include "adc.h"
 #include "dac.h"
 #include "dma.h"
+#include "i2c.h"
 #include "memorymap.h"
 #include "tim.h"
 #include "usart.h"
@@ -28,7 +29,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "DDS.h"
 #include "MSG.h"
+#include "si5351.h" // Include SI5351 driver
+#include <stdio.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,7 +62,13 @@ void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-
+extern void UART1_Receive_Start(void);
+extern void CMD_Init(void);
+extern void FFT_Init(void);
+extern void UART_Poll(void);
+extern void CMD_Poll(void);
+extern void ADC_Poll(void);
+extern void FFT_Poll(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -108,30 +119,131 @@ int main(void)
   MX_TIM3_Init();
   MX_ADC1_Init();
   MX_TIM4_Init();
-  MX_TIM12_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-  extern void UART1_Receive_Start(void);
   UART1_Receive_Start();
-  extern void CMD_Init(void);
   CMD_Init();
-  extern void FFT_Init(void);
   FFT_Init();
+
+  /* DDS Output Test: Setup DAC1 to output 10kHz, 3.3Vpp Sine Wave (WaveType=2) */
+  DDS1_Update_DATA(50000, 1000, 0);
+
+  /* SI5351 Output Test */
+  si5351_Init();
+  si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
+
+  extern void Start_Sample(void);
+  extern uint8_t fft_ready_flag;
+  extern uint16_t CH1_Buffer[4096];
+    extern uint16_t CH2_Buffer[4096];
+  uint8_t pga_state = 0;
+  Start_Sample();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  extern void UART_Poll(void);
-  extern void CMD_Poll(void);
-  extern void ADC_Poll(void);
-  extern void FFT_Poll(void);
   while (1)
   {
-      UART_Poll();
-      CMD_Poll();
-      ADC_Poll();
-      FFT_Poll();
+      // UART_Poll();
+      // CMD_Poll();
+      // ADC_Poll();
+      // FFT_Poll();
+
+      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+
+      if (fft_ready_flag)
+      {
+          fft_ready_flag = 0;
+
+          // 简化测量峰峰值算法：直接寻找最大值和最小值
+          uint16_t max_val = 0;
+          uint16_t min_val = 65535;
+
+          for(int i = 0; i < 4096; i++) {
+              uint16_t v = CH2_Buffer[i];
+              if(v > max_val) max_val = v;
+              if(v < min_val) min_val = v;
+          }
+
+          uint16_t vpp_adc = max_val - min_val;
+          float vpp_mv = ((float)vpp_adc / 65535.0f) * 3300.0f;
+
+          // 根据电压直接选择GPIO状态 (程控放大器增益由小到大对应状态0到6)
+          // 测量范围20mV-3000mV，根据不同电压范围直接映射状态
+          if (vpp_mv<390.0f && vpp_mv>80.0f) {
+              pga_state = 3; // 000: 增益最小
+          } else if (vpp_mv < 80.0f && vpp_mv > 40.0f) {
+              pga_state = 0; // 001
+          } else if (vpp_mv < 40.0f ) {
+              pga_state = 7; // 010
+          } else if (vpp_mv >=390.0f && vpp_mv < 810.0f) {
+              pga_state = 4; // 011
+          } else if (vpp_mv >= 810.0f) {
+              pga_state = 1; // 100
+          } else {
+              pga_state = 2; // 其他情况（如过大）使用增益最大状态
+          }
+
+          // 更新程控放大器状态机（PH6, PH7, PH10）
+          switch (pga_state) {
+              case 0: // 000
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+                  break;
+              case 1: // 001
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+                  break;
+              case 2: // 010
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+                  break;
+              case 3: // 011
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+                  break;
+              case 4: // 100
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
+                  break;
+              case 5: // 101
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
+                  break;
+              case 6: // 110
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
+                  break;
+              case 7: // 110
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
+                  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
+                  break;
+              default:
+                  break;
+          }
+
+          // 打印波形数据 (单位V, VOFA+ JustFloat 格式)
+          for(int i = 0; i < 4096; i++) {
+              float voltage = (CH1_Buffer[i] / 65535.0f) * 3.3f;
+              printf("%f\n", voltage);
+          }
+
+          HAL_Delay(3000);
+          Start_Sample();
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
