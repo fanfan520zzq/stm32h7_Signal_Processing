@@ -46,6 +46,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
+        Core/AD9833/ad9833_hal.c
         Core/AD9833/ad9833_hal.h
         Core/Task/Measure.c
         Core/Task/Measure.h
@@ -83,6 +84,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
 
+        Core/AD9833/ad9833_hal.c
+        Core/AD9833/ad9833_hal.h
+
 )
 
 
@@ -98,7 +102,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Drivers/CMSIS/DSP/Include
         Drivers/CMSIS/Include
         Middlewares/ST/ARM/DSP/Inc
-    Core/si5351
+        Core/si5351
+        Core/AD9833
 )
 
 # Add project symbols (macros)

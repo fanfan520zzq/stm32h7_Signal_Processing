@@ -13,6 +13,9 @@ uint16_t CH2_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((
 uint16_t ADC1_DMA_Buffer[LEN * 2] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 
 static volatile uint8_t g_adc1_done = 0;
+static volatile uint8_t g_adc2_done = 0;
+
+uint16_t ADC2_DMA_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     if(hadc == &hadc1){
@@ -25,6 +28,10 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
 
         g_adc1_done = 1;
         fft_ready_flag = 1;
+    }
+    else if (hadc == &hadc2) {
+        HAL_ADC_Stop_DMA(&hadc2);
+        g_adc2_done = 1;
     }
 }
 
@@ -63,4 +70,17 @@ void ADC1_Measure_Sync(uint16_t *vpp_ch1, uint16_t *vpp_ch2) {
     }
     *vpp_ch1 = ch1_max - ch1_min;
     *vpp_ch2 = ch2_max - ch2_min;
+}
+
+void ADC2_Measure_Sync(uint16_t *buf, uint32_t len) {
+    g_adc2_done = 0;
+    HAL_ADC_Stop_DMA(&hadc2);
+    HAL_TIM_Base_Start(&htim4);
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)ADC2_DMA_Buffer, len);
+
+    while (!g_adc2_done) {}
+
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = ADC2_DMA_Buffer[i];
+    }
 }
