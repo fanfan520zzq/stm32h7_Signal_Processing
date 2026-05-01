@@ -4,14 +4,11 @@
 
 #include "DDS.h"
 
-
-static int16_t SinBuffer[1024],SquBuffer[1024],TriBuffer[1024];
+static int16_t SinBuffer[1024], SquBuffer[1024], TriBuffer[1024];
 uint16_t Buffer2[1024] __attribute__((section(".dma_buffer")));
-uint16_t Buffer1[1024] __attribute__((section(".dma_buffer")));
 
-static uint32_t phase_index1=0,FTW1;
-static uint32_t phase_index2=0,FTW2;
-static uint16_t Buffer1_Len,Buffer2_Len;
+static uint32_t phase_index2 = 0, FTW2;
+static uint16_t Buffer2_Len;
 
 #define DAC_BIAS_1V    1241.21f  /* 1V DC = 4096 * 1.0 / 3.3 */
 #define DAC_AMP_0_5V   620.606f  /* 0.5V amplitude = 4096 * 0.5 / 3.3 */
@@ -26,69 +23,36 @@ void DDS_Init(void)
         else  TriBuffer[i] = (int16_t)((1024 - i) * (2.0f * DAC_AMP_0_5V) / 512.0f - DAC_AMP_0_5V);
     }
 
-    HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+    // 仅保留 DAC_CHANNEL_2 的停止操作
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
     HAL_TIM_Base_Start(&htim6);
-    HAL_TIM_Base_Start(&htim7);
 }
 
-
-void DDS1_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
-    HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-
-    phase_index1=0;
-    FTW1=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer1_Len = (uint32_t)(DDS_TIM / freq);
-
-    float scale = (float)vpp / 1000.0f;
-    for(int i=0;i<Buffer1_Len;i++){
-        switch(waveType){
-            case 0:
-                Buffer1[i]=(uint16_t)(SinBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 1:
-                Buffer1[i]=(uint16_t)(SquBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 2:
-                Buffer1[i]=(uint16_t)(TriBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            default:
-                Buffer1[i]=(uint16_t)DAC_BIAS_1V;
-                break;
-        }
-        phase_index1+=FTW1;
-    }
-
-    //SCB_CleanDCache_by_Addr((uint32_t*)Buffer1, Buffer1_Len * sizeof(uint16_t));
-    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)Buffer1, Buffer1_Len, DAC_ALIGN_12B_R);
-}
-
-void DDS2_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
+void DDS2_Update_DATA(uint16_t freq, uint16_t vpp, uint8_t waveType){ //vpp 0-1000
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
 
-    phase_index2=0;
-    FTW2=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer2_Len=(uint32_t)(DDS_TIM / freq);
+    phase_index2 = 0;
+    FTW2 = (uint32_t)(freq) * (4294967296.0f) / DDS_TIM; //2^32=4294967296
+    Buffer2_Len = (uint32_t)(DDS_TIM / freq);
 
     float scale = (float)vpp / 1000.0f;
-    for(int i=0;i<Buffer2_Len;i++){
+    for(int i = 0; i < Buffer2_Len; i++){
         switch(waveType){
             case 0:
-                Buffer2[i]=(uint16_t)(SinBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
+                Buffer2[i] = (uint16_t)(SinBuffer[phase_index2 >> 22] * scale + DAC_BIAS_1V);
                 break;
             case 1:
-                Buffer2[i]=(uint16_t)(SquBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
+                Buffer2[i] = (uint16_t)(SquBuffer[phase_index2 >> 22] * scale + DAC_BIAS_1V);
                 break;
             case 2:
-                Buffer2[i]=(uint16_t)(TriBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
+                Buffer2[i] = (uint16_t)(TriBuffer[phase_index2 >> 22] * scale + DAC_BIAS_1V);
                 break;
             default:
-                Buffer2[i]=(uint16_t)DAC_BIAS_1V;
+                Buffer2[i] = (uint16_t)DAC_BIAS_1V;
                 break;
         }
-        phase_index2+=FTW2;
+        phase_index2 += FTW2;
     }
     //SCB_CleanDCache_by_Addr((uint32_t*)Buffer2, Buffer2_Len * sizeof(uint16_t));
     HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)Buffer2, Buffer2_Len, DAC_ALIGN_12B_R);
-
 }

@@ -46,9 +46,9 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
-        Core/si5351/si5351.h
+        Core/AD9833/ad9833_hal.h
+        Core/Task/Measure.c
+        Core/Task/Measure.h
 
 )
 
@@ -82,8 +82,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
+
 )
 
 

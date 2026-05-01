@@ -28,7 +28,7 @@
  * ========================================================================= */
 
 /** ADC sample rate [Hz] */
-#define SAMPLE_RATE_HZ          2000000.0f
+#define SAMPLE_RATE_HZ          10000.0f
 
 /** ADC full-scale reference voltage [V] */
 #define ADC_VREF                3.3f

@@ -10,9 +10,16 @@
 
 #define CH1 1
 #define CH2 2
-#define LEN 4096
+#define LEN 2048
 
-extern uint16_t CH1_Buffer[LEN] ;
-extern uint16_t CH2_Buffer[LEN] ;
+#define ADC_SAMPLE_RATE_HZ 10000
+
+extern uint16_t CH1_Buffer[LEN];
+extern uint16_t CH2_Buffer[LEN];
+extern uint16_t ADC1_DMA_Buffer[LEN * 2];
+
+void ADC1_Measure_Sync(uint16_t *vpp_ch1, uint16_t *vpp_ch2);
+void ADC_Start_DMA(void);
+void Start_Sample(void);
 
 #endif //IIT6_OSCILLISCOPE_ADC_H
