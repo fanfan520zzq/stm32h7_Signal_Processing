@@ -129,7 +129,6 @@ int main(void)
   CMD_Init();
   FFT_Init();
 
-  DDS2_Update_DATA(1000, 200, 0);
 
   /* USER CODE END 2 */
 
@@ -137,7 +136,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    //在做测试，保留注释
+      //在做测试，保留注释
       // UART_Poll();
       // CMD_Poll();
       // ADC_Poll();
