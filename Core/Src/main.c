@@ -137,8 +137,8 @@ int main(void)
   while (1)
   {
       //在做测试，保留注释
-      // UART_Poll();
-      // CMD_Poll();
+      UART_Poll();
+      CMD_Poll();
       // ADC_Poll();
       // FFT_Poll();
 

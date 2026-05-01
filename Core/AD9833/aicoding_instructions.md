@@ -1,62 +1,214 @@
-# AD9833 STM32 HAL库驱动设计指南
+# AD9833 STM32 HAL 库硬件 SPI 驱动设计指南
 
-本指南用于指导使用STM32 HAL库重构AD9833波形发生器模块的底层与应用代码，实现定频、扫频与幅值可变的需求。
+## 1. 模块硬件架构（两个芯片共享 SPI 总线）
 
-## 1. 硬件通信接口 (SPI/GPIO模拟)
+```
+                    ┌─────────────────┐
+STM32   SCK ────────┤ AD9833 (DDS)    │
+        DAT ────────┤                 │
+        FSYNC ──────┤ 片选: FSYNC (Pin15)
+                    └────────┬────────┘
+                             │ 信号输出
+                    ┌────────┴────────┐
+        CS  ────────┤ 数字电位器      │ ← 控制幅度
+                    │ (MCP41010 等)   │
+                    └─────────────────┘
+```
 
-AD9833 使用单向的 SPI 协议（DAT, CLK, FNC）。C51例程使用的是软件模拟SPI，建议在STM32 HAL库中封装底层写16位数据的接口。可以选择 **硬件SPI** 或 **软件模拟SPI**。
+| 片选引脚 | 控制对象 | 功能 |
+|----------|----------|------|
+| FSYNC (GPIO 引脚) | AD9833 本身 | 设频率、波形 |
+| CS (GPIO 引脚) | 外部调幅芯片（数字电位器） | 控制输出幅度（0~255） |
+
+两个设备共用 SCK 和 DAT 引脚，各自独立片选，分时操作不冲突。
+
+---
+
+## 2. AD9833 SPI 时序
+
+### 2.1 时序参数
+
+| 参数 | 值 |
+|------|-----|
+| SPI 模式 | **Mode 3**（CPOL=1, CPHA=1） |
+| 时钟空闲电平 | **高电平** |
+| 数据采样沿 | **上升沿**（SCK 由低→高时 AD9833 锁存） |
+| 数据移位沿 | 下降沿 |
+| 数据长度 | **16 位**，MSB 先发 |
+| FSYNC | 传输前拉低，**整个 16 位过程保持低**，结束后拉高 |
+
+### 2.2 CubeMX 硬件 SPI 配置
+
+```
+SPI Mode:      Transmit Only Master (或 Full-Duplex Master)
+Frame Format:  Motorola
+Data Size:     8 bits（发两字节） 或 16 bits
+CPOL:          HIGH
+CPHA:          2 Edge  (即 Mode 3)
+NSS:           Software（用普通 GPIO 控制 FSYNC）
+Baud Rate:     ≤ 10MHz（AD9833 最高 40MHz，建议用 分频后≤10M）
+```
+
+### 2.3 硬件 SPI 写入函数
+
+**8 位模式（推荐，兼容性更好）：**
 
 ```c
-// 软件模拟SPI 伪代码参考
-void AD9833_Write16(uint16_t data) {
+static void AD9833_Write16(uint16_t data)
+{
+    uint8_t buf[2];
+    buf[0] = (data >> 8) & 0xFF;  // 高字节先发
+    buf[1] = data & 0xFF;
+
+    HAL_GPIO_WritePin(FSYNC_PORT, FSYNC_PIN, GPIO_PIN_RESET); // 拉低片选
+    HAL_SPI_Transmit(&hspi1, buf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(FSYNC_PORT, FSYNC_PIN, GPIO_PIN_SET);   // 拉高片选
+}
+```
+
+**16 位模式（SPI 设 Data Size=16bits）：**
+
+```c
+static void AD9833_Write16(uint16_t data)
+{
     HAL_GPIO_WritePin(FSYNC_PORT, FSYNC_PIN, GPIO_PIN_RESET);
-    for(int i=0; i<16; i++) {
-        if(data & 0x8000) 
-            HAL_GPIO_WritePin(DAT_PORT, DAT_PIN, GPIO_PIN_SET);
-        else 
-            HAL_GPIO_WritePin(DAT_PORT, DAT_PIN, GPIO_PIN_RESET);
-        
-        HAL_GPIO_WritePin(CLK_PORT, CLK_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(CLK_PORT, CLK_PIN, GPIO_PIN_SET);
-        data <<= 1;
-    }
+    HAL_SPI_Transmit(&hspi1, (uint8_t*)&data, 1, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(FSYNC_PORT, FSYNC_PIN, GPIO_PIN_SET);
 }
 ```
 
-## 2. 核心功能需求实现
+> FSYNC 是普通 GPIO，与硬件 SPI 的 NSS 无关，用 `HAL_GPIO_WritePin` 手动控制。
 
-### 2.1 定频输出 (Fixed Frequency)
-必须包含频率设定函数。AD9833频率寄存器是28位的，写入分两步（连续两次写入或一次完整写入），计算公式： 
-> $ Freq\_Reg = \frac{F_{out} \times 2^{28}}{F_{MCLK}} $
+---
 
-通常 $F_{MCLK}$ = 25MHz。寄存器需拆分为两个14位的数据分别写入。
+## 3. AD9833 控制寄存器详解（16 位）
 
-### 2.2 波形切换 (Waveform Selection)
-根据原始C51例程，可以通过配置控制寄存器选定不同波形：
-- 正弦波 (Sine): `0x2000`
-- 三角波 (Triangle): `0x2002`
-- 方波 (Square): `0x2020` 或 `0x2028`
+### 3.1 控制寄存器位（D15:D14 = 00）
 
-### 2.3 扫频输出 (Frequency Sweeping)
-建议创建一个非阻塞或定时器驱动的扫频函数。
-- **机制**：从 `Freq_Start` 到 `Freq_End`，按照 `Step`（步进）和 `TimeRange`（每步时间间隔）进行更新。
-- **技巧**：AD9833具备 `FREQ0` 和 `FREQ1` 两个频率寄存器，可以通过后台预先写入下一个频率的寄存器，然后切换引脚或控制位实现无缝切频，从而避免频率突变停顿。
+```
+15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
+ 0  0 B28 HLB FS  PS  RST S1 S12 OPB SP DV2 X  X MO X
+```
 
-### 2.4 幅值可变输出 (Variable Amplitude) 注意事项与对策
-**极其重要的硬件限制：** AD9833 芯片自身 **不支持** 通过内部寄存器直接调节输出电压波形的相对幅值（其DAC满量程由外部电阻决定，输出通常固定在 0.6V p-p 左右）。
-- **如果你的模块带有数字电位器（如MCP41xxx）或AGC电路**：你需要编写相应的程控增益驱动（SPI/I2C控制电位器）。
-- **如果你的模块没有外接数字芯片**：只能依靠外部手动旋钮电位器，软件层**无法**凭空实现“幅值可变输出”。在代码生成时应明确此模块的具体外围链路，或给出利用外接 DAC / 数字电位器调节电压参考的接口预留。
+| 位 | 名称 | 说明 |
+|----|------|------|
+| D13 | B28 | **1** = 28 位频率分两次写入（先 LSB 后 MSB，必须置 1） |
+| D12 | HLB | 当 B28=0 时选择高/低 14 位；B28=1 时忽略 |
+| D11 | FSELECT | 频率寄存器选择：0=FREQ0, 1=FREQ1 |
+| D10 | PSELECT | 相位寄存器选择 |
+| D9 | RESET | **1** = 复位内部寄存器（初始化和扫频切换前用） |
+| D8 | SLEEP1 | 1 = 关闭内部 MCLK（省电用） |
+| D7 | SLEEP12 | 1 = 关闭内部 DAC（省电用） |
+| D6 | OPBITEN | **1** = 启用方波输出 |
+| D5 | SIGN/PIB | 方波来源：0=DAC MSB, 1=比较器输出 |
+| D4 | DIV2 | 方波分频：0=不分频, 1=÷2 |
+| D1 | MODE | 0=正弦/三角波输出, 1=方波使能（与 D6 配合） |
 
-## 3. 面向AICoding的具体开发步骤
+### 3.2 常用控制字
 
-1. **提供引脚与系统时钟配置**：确认 MCLK 大小（多数模块采用 25MHz 有源晶振）。
-2. **编写底层寄存器写入宏或内联函数**：实现 `Write16()`。
-3. **架构头文件 (`ad9833.h`)**：
-   - 枚举波形类型：`typedef enum { AD9833_SINE, AD9833_SQUARE, AD9833_TRIANGLE } Waveform_t;`
-   - 定义参数结构体。
-4. **架构源文件 (`ad9833.c`)**：
-   - 编写 `AD9833_Init()`
-   - 编写频率设置 `AD9833_SetFrequency(uint8_t RegNum, uint32_t freq, Waveform_t type)`
-   - 编写扫频轮询/定时器服务程序 `AD9833_SweepTick()`
-5. **整合资源**：将代码输出到目标工程中进行引脚绑定。
+| 控制字 | 二进制（仅标注关键位） | 含义 |
+|--------|------------------------|------|
+| `0x0100` | `0000 0001 0000 0000` | 置位 RESET（复位） |
+| `0x2100` | `00_1_0_0_0_0_1_00000000` | B28=1 + RESET=1，准备写 28 位频率 |
+| `0x2000` | B28=1，其余=0 | **正弦波**（退出复位） |
+| `0x2002` | B28=1, MODE=1 | **三角波** |
+| `0x2020` | B28=1, OPBITEN=1 | **方波**（DAC MSB 输出，不分频） |
+| `0x2028` | B28=1, OPBITEN=1, BIT3=1 | 方波（C51 例程值，可兼容） |
+| `0x2130` | B28=1, FSELECT=1, RESET=1 | 切换到 FREQ1 并复位 |
+
+### 3.3 频率写入公式
+
+```
+Freq_Reg = (Fout × 2^28) / MCLK
+
+2^28 = 268435456
+```
+
+典型 MCLK = **25 MHz**（模块上有源晶振）。将计算结果拆为两个 14 位：
+
+```c
+uint32_t FreqReg_val = (uint32_t)((freq * 268435456.0) / 25000000.0);
+uint16_t LSB_14 = FreqReg_val & 0x3FFF;
+uint16_t MSB_14 = (FreqReg_val >> 14) & 0x3FFF;
+
+// FREQ0
+AD9833_Write16(LSB_14 | 0x4000);  // D15=0, D14=1 → FREQ0
+AD9833_Write16(MSB_14 | 0x4000);
+
+// FREQ1
+AD9833_Write16(LSB_14 | 0x8000);  // D15=1, D14=0 → FREQ1
+AD9833_Write16(MSB_14 | 0x8000);
+```
+
+---
+
+## 4. 幅度控制（外部数字电位器）
+
+AD9833 芯片**本身不支持幅度调节**，模块上额外集成了一个数字电位器（如 MCP41010）。
+
+写入格式（同一 SPI 总线，独立 CS 片选）：
+
+```c
+void AD9833_AmpSet(uint8_t amp)   // amp: 0(最小) ~ 255(最大)
+{
+    HAL_GPIO_WritePin(AMP_CS_PORT, AMP_CS_PIN, GPIO_PIN_RESET); // 选中电位器
+    
+    uint16_t data = 0x1100 | amp;  // 0x11 = MCP41010 写命令
+    HAL_SPI_Transmit(&hspi1, (uint8_t*)&data, 1, HAL_MAX_DELAY);
+    
+    HAL_GPIO_WritePin(AMP_CS_PORT, AMP_CS_PIN, GPIO_PIN_SET);   // 释放
+}
+```
+
+> 操作调幅芯片时，FSYNC 必须保持高电平（AD9833 未被选中）。
+
+---
+
+## 5. 初始化流程
+
+```c
+void AD9833_Init(void)
+{
+    AD9833_Write16(0x0100);    // ① 复位
+    AD9833_Write16(0x2100);    // ② B28=1（准备写 28 位频率）+ 保持复位
+    AD9833_Write16(0x2000);    // ③ 退出复位，输出正弦波
+    AD9833_SetFrequency(FREQ_REG_0, 1000);  // ④ 初始频率 1kHz
+    AD9833_AmpSet(255);         // ⑤ 初始幅度最大
+}
+```
+
+---
+
+## 6. 头文件新增内容
+
+在已有定义基础上增加：
+
+```c
+/* 外部调幅芯片 CS 引脚（根据原理图修改） */
+#define AMP_CS_PORT     GPIOB
+#define AMP_CS_PIN      GPIO_PIN_12
+
+/* 函数声明 */
+void AD9833_AmpSet(uint8_t amp);  // 新增调幅
+```
+
+---
+
+## 7. 与旧版软件模拟 SPI 的对照
+
+| 项目 | 软件模拟 SPI（旧版） | 硬件 SPI（新版） |
+|------|---------------------|-----------------|
+| SCK 控制 | GPIO 手动翻转 | SPI 外设自动产生 |
+| DAT 控制 | GPIO 逐位写 | SPI 外设串行移位 |
+| FSYNC 控制 | 手动拉低/拉高 | 仍用 GPIO 手动控制 |
+| 写入函数 | `for` 循环 16 次位操作 | `HAL_SPI_Transmit` 一次完成 |
+| 调幅 | 无此功能 | `AD9833_AmpSet()` |
+
+---
+
+## 8. 常见问题
+
+1. **输出频率不准** → 检查 `AD9833_MCLK_FREQ` 是否与实际晶振一致（多数为 25MHz）
+2. **波形不对** → 检查 Mode 3 配置；示波器看 SCK 空闲是否高电平
+3. **调幅无效** → 确认 CS 引脚 GPIO 初始化正确，确认 `0x1100` 命令与模块上实际外设匹配
+4. **扫频卡顿** → 可用两个频率寄存器（FREQ0/FREQ1）交替写入，用 FSELECT 位切换，实现无缝切频
