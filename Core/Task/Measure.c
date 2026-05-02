@@ -8,7 +8,7 @@
 #include "ad9833_hal.h"
 #include <math.h>
 
-#define RS_IN_OHM     500.0f
+#define RS_IN_OHM     10000.0f
 #define RS_OUT_OHM    10000.0f
 #define ADC_TO_VOLT   (3.3f / 65535.0f)
 #define ADC2_N        2048
@@ -55,7 +55,27 @@ float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
     float im  = s2 * sinf(omega);
     float mag = sqrtf(re * re + im * im);
 
-    return 2.0f * mag / (float)N * ADC_TO_VOLT;
+    return 4.0f * mag / (float)N * ADC_TO_VOLT;
+}
+
+/* ---- 直接DFT: 无IIR累积误差，作为Goertzel对照 ---- */
+float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
+{
+    float mean = 0;
+    for (uint32_t i = 0; i < N; i++) mean += (float)buf[i];
+    mean /= (float)N;
+
+    float omega = 2.0f * 3.1415926535f * f_sig / f_sample;
+    float re = 0, im = 0;
+    for (uint32_t i = 0; i < N; i++) {
+        float x  = (float)buf[i] - mean;
+        float th = omega * (float)i;
+        re += x * cosf(th);
+        im -= x * sinf(th);
+    }
+    float mag = sqrtf(re * re + im * im);
+
+    return 4.0f * mag / (float)N * ADC_TO_VOLT;
 }
 
 /* ---- 延时2个信号周期 ---- */
@@ -123,7 +143,7 @@ void FreqResponse_Measure(void)
 /* ---- 输入电阻测量 (RMS法, Rs=500Ω) ---- */
 float Measure_Input_Resistance(void)
 {
-    DDS2_Update_DATA(1000, 200, 0);
+    //DDS2_Update_DATA(1000, 200, 0);
 
     uint16_t dummy1, dummy2;
     ADC1_Measure_Sync(&dummy1, &dummy2);
@@ -131,34 +151,50 @@ float Measure_Input_Resistance(void)
     float rms1 = Compute_RMS(CH1_Buffer, LEN);
     float rms2 = Compute_RMS(CH2_Buffer, LEN);
 
+    rms1 = rms1 / 25;
+    rms2 = rms2 / 10;
+
     float diff = fabsf(rms1 - rms2);
     if (diff < 1e-6f) return 0.0f;
 
     float I = diff / RS_IN_OHM;
 
-    return (rms1 > rms2 ? rms1 : rms2) / I;
+    return rms1 / I;
 }
 
-/* ---- 输出电阻测量 (RMS法, AD9833 1kHz/200mVpp, Rs=10kΩ) ---- */
-float Measure_Output_Resistance(void)
+/* ---- 输入电阻测量 (DFT法, Rs=500Ω) ---- */
+float Measure_Input_Resistance_DFT(void)
 {
-    AD9833_SetFixedOutput(1000, WAVE_SINE);
-    AD9833_AmpSet(170);
 
-    uint16_t buf[ADC2_N];
+    uint16_t dummy1, dummy2;
+    ADC1_Measure_Sync(&dummy1, &dummy2);
 
-    ADC2_Measure_Sync(buf, ADC2_N);
-    float rms1 = Compute_RMS(buf, ADC2_N);
+    float vpp1 = Goertzel_Vpp(CH1_Buffer, LEN, 1000.0f, 10000.0f);
+    float vpp2 = Goertzel_Vpp(CH2_Buffer, LEN, 1000.0f, 10000.0f);
 
-    HAL_Delay(1000);
-
-    ADC2_Measure_Sync(buf, ADC2_N);
-    float rms2 = Compute_RMS(buf, ADC2_N);
+    float rms1 = vpp1 * 0.353553f / 25 ;
+    float rms2 = vpp2 * 0.353553f / 10 ;
 
     float diff = fabsf(rms1 - rms2);
     if (diff < 1e-6f) return 0.0f;
 
-    float I = diff / RS_OUT_OHM;
+    float I = diff / RS_IN_OHM;
 
-    return (rms1 > rms2 ? rms1 : rms2) / I;
+    return rms1 / I;
+}
+
+/* ---- DFT峰峰值测量 CH1 ---- */
+float DFT_Measure_CH1_Vpp(float f_sig, float f_sample)
+{
+    uint16_t dummy1, dummy2;
+    ADC1_Measure_Sync(&dummy1, &dummy2);
+    return Goertzel_Vpp(CH1_Buffer, LEN, f_sig, f_sample);
+}
+
+/* ---- DFT峰峰值测量 CH2 ---- */
+float DFT_Measure_CH2_Vpp(float f_sig, float f_sample)
+{
+    uint16_t dummy1, dummy2;
+    ADC1_Measure_Sync(&dummy1, &dummy2);
+    return Goertzel_Vpp(CH2_Buffer, LEN, f_sig, f_sample);
 }
