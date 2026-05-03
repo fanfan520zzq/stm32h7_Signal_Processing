@@ -21,7 +21,7 @@ static inline void lcd_wait_dma(void) {
 }
 
 
-static void lcd_send_raw(const uint8_t *data, uint16_t len) {
+void lcd_send_raw(const uint8_t *data, uint16_t len) {
     lcd_wait_dma();
     memcpy(tx_front, data, len);
     // SCB_CleanDCache_by_Addr((uint32_t*)tx_front, len);

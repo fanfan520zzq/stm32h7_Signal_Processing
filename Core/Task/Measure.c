@@ -17,6 +17,8 @@
 float    g_gain_response[FREQ_POINTS];
 uint32_t g_freq_list[FREQ_POINTS];
 float    g_cutoff_fH;
+float    g_cutoff_fL;
+float    g_mid_gain;
 
 /* ---- 计算均方根值(去直流后) ---- */
 float Compute_RMS(const uint16_t *buf, uint32_t N)
@@ -271,7 +273,7 @@ void FreqResponse_Sweep(void)
         sweep_gain[i] = vpp_n * 0.353553f * 5 / rms_d;
     }
 
-    /* 阶段2: 100kHz (5点), k≥10 */
+    /* : 100kHz (5点), Hann窗 */
     ADC1_SetRate_100kHz();
     ADC2_SetRate_100kHz();
     for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
@@ -280,11 +282,11 @@ void FreqResponse_Sweep(void)
 
         uint16_t d1, d2;
         ADC1_Measure_Sync(&d1, &d2);
-        float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)f, 100000.0f);
+        float vpp_d = Goertzel_Vpp_Hann(CH1_Buffer, LEN, (float)f, 100000.0f);
         float rms_d = vpp_d * 0.353553f / 25.0f;
 
         ADC2_Measure_Sync(buf2, 2048);
-        float vpp_n = Goertzel_Vpp(buf2, 2048, (float)f, 100000.0f);
+        float vpp_n = Goertzel_Vpp_Hann(buf2, 2048, (float)f, 100000.0f);
         sweep_gain[i] = vpp_n * 0.353553f * 5 / rms_d;
     }
 
@@ -386,5 +388,159 @@ void FreqResponse_Sweep(void)
             g_cutoff_fH = (float)g_freq_list[i];
             break;
         }
+    }
+}
+
+/* ===================================================================
+ * 幅频拟合: 20点测量 + 双段最小二乘 + 模型重建480点
+ *
+ * 低段拟合(6点,30~350Hz): Y=1/G² vs X=1/f² → f_L = √(k/b)
+ * 高段拟合(6点,140k~250kHz): Y=1/G² vs X=f² → f_H = 1/√(b·k)
+ * A_mid = gain@1kHz
+ * 重建: |A(f)| = A_mid / √((1+(fL/f)²)(1+(f/fH)²))
+ * =================================================================== */
+void FreqResponse_Fit(void)
+{
+    static const uint32_t sweep_freqs[SWEEP_POINTS] = {
+        30, 80, 150, 200, 280, 350,
+        500, 800, 1000, 3000, 10000,
+        30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
+    };
+    float sweep_gain[SWEEP_POINTS];
+    uint16_t buf2[2048];
+
+    AD9833_AmpSet(12);
+
+    /* 阶段1: 10kHz (6点), k≥6 */
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+    for (int i = 0; i < STAGE1_N; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)f, 10000.0f);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n = Goertzel_Vpp(buf2, 2048, (float)f, 10000.0f);
+        sweep_gain[i] = vpp_n * 0.353553f * 5 / rms_d;
+    }
+
+    /* : 100kHz (5点), Hann窗 */
+    ADC1_SetRate_100kHz();
+    ADC2_SetRate_100kHz();
+    for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp_Hann(CH1_Buffer, LEN, (float)f, 100000.0f);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n = Goertzel_Vpp_Hann(buf2, 2048, (float)f, 100000.0f);
+        sweep_gain[i] = vpp_n * 0.353553f * 5 / rms_d;
+    }
+
+    /* 阶段3: 2.4MHz (9点), Hann窗Goertzel, k≥8.5 */
+    ADC1_SetRate_2400kHz();
+    ADC2_SetRate_2400kHz();
+    for (int i = STAGE1_N + STAGE2_N; i < SWEEP_POINTS; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp_Hann(CH1_Buffer, LEN, (float)f, ADC2_FS);
+        float vpp_d_test = Compute_RMS(CH1_Buffer,LEN);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n_test = Compute_RMS(CH2_Buffer,LEN);
+        float vpp_n = Goertzel_Vpp_Hann(buf2, 2048, (float)f, ADC2_FS);
+        sweep_gain[i] = vpp_n * 0.353553f * 125 / vpp_d_test;
+    }
+
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+
+
+    /* 低段最小二乘: Y=1/G² vs X=1/f² (6点, 30~350Hz) → f_L */
+    #define LF_N 6
+    float sx=0, sy=0, sxy=0, sx2=0;
+    int n = 0;
+    for (int i = 0; i < LF_N; i++) {
+        float ff = (float)sweep_freqs[i];
+        float g  = sweep_gain[i];
+        if (g < 1e-6f) continue;
+        float x = 1.0f / (ff * ff);
+        float y = 1.0f / (g * g);
+        sx += x; sy += y; sxy += x*y; sx2 += x*x;
+        n++;
+    }
+    if (n >= 2 && n*sx2 - sx*sx > 0) {
+        float kl = (n*sxy - sx*sy) / (n*sx2 - sx*sx);
+        float bl = (sy - kl*sx) / n;
+        g_cutoff_fL = (kl > 0 && bl > 0) ? sqrtf(kl / bl) : 0;
+    } else g_cutoff_fL = 0;
+
+    /* 高段最小二乘: Y=1/G² vs X=f² (6点, 140k~250kHz) → f_H */
+    #define HF_N 6
+    sx=0; sy=0; sxy=0; sx2=0;
+    n = 0;
+    for (int i = 14; i < 14 + HF_N; i++) {
+        float ff = (float)sweep_freqs[i];
+        float g  = sweep_gain[i];
+        if (g < 1e-6f) continue;
+        float x = ff * ff;
+        float y = 1.0f / (g * g);
+        sx += x; sy += y; sxy += x*y; sx2 += x*x;
+        n++;
+    }
+    if (n >= 2 && n*sx2 - sx*sx > 0) {
+        float kh = (n*sxy - sx*sy) / (n*sx2 - sx*sx);
+        float bh = (sy - kh*sx) / n;
+        g_cutoff_fH = (kh > 0 && bh > 0) ? sqrtf(bh / kh) : 0;
+    } else g_cutoff_fH = 0;
+
+    /* A_mid = gain@1kHz */
+    g_mid_gain = sweep_gain[8];
+
+    /* 双极点模型重建480点 */
+    float fL2 = g_cutoff_fL * g_cutoff_fL;
+    float fH2 = g_cutoff_fH * g_cutoff_fH;
+    int idx = 0;
+    float step1 = (1000.0f - 10.0f) / 199.0f;
+    for (int i = 0; i < 200; i++) {
+        float f = 10.0f + (float)i * step1;
+        float f2 = f * f;
+        g_freq_list[idx]     = (uint32_t)f;
+        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
+        idx++;
+    }
+    for (int t = 0; t < 4; t++) {
+        float f = 1000.0f + t * 1000.0f;
+        float f2 = f * f;
+        g_freq_list[idx]     = (uint32_t)f;
+        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
+        idx++;
+    }
+    for (int i = 0; i < 76; i++) {
+        float f = 5000.0f + i * 1000.0f;
+        float f2 = f * f;
+        g_freq_list[idx]     = (uint32_t)f;
+        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
+        idx++;
+    }
+    float step3 = (1200000.0f - 80000.0f) / 199.0f;
+    for (int i = 0; i < 200; i++) {
+        float f = 80000.0f + (float)i * step3;
+        float f2 = f * f;
+        g_freq_list[idx]     = (uint32_t)f;
+        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
+        idx++;
     }
 }

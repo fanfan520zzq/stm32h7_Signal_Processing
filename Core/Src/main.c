@@ -149,11 +149,10 @@ int main(void)
   {
 
 
-    FreqResponse_Sweep();
-
-     for (int i=0;i< FREQ_POINTS;i++) {
-       printf("%.3f\n",g_gain_response[i]);
-     }
+      FreqResponse_Fit();
+      for (int i=0;i< FREQ_POINTS;i++) {
+        printf("%.3f\n",g_gain_response[i]);
+      }
 
      // float r_out_test = Measure_Input_Resistance();
      //  FreqResponse_Fit();

@@ -98,9 +98,28 @@ void CMD_Poll(void)
             break;
         }
 
-        case CMD_FREQ_RESPONSE:
+        case CMD_FREQ_RESPONSE: {
             FreqResponse_Sweep();
+
+            /* 归一化增益到0-255, addt推曲线 */
+            uint8_t curve[FREQ_POINTS];
+            float max_g = 0;
+            for (int i = 0; i < FREQ_POINTS; i++)
+                if (g_gain_response[i] > max_g) max_g = g_gain_response[i];
+            float scale = (max_g > 1e-6f) ? 200.0f / max_g : 1.0f;
+            for (int i = 0; i < FREQ_POINTS; i++) {
+                float v = g_gain_response[i] * scale;
+                if (v > 255) v = 255;
+                curve[i] = (uint8_t)v;
+            }
+
+            lcd_cmd("addt 2,0,%d", FREQ_POINTS);
+            HAL_Delay(10);
+            lcd_send_raw(curve, FREQ_POINTS);
+
+            lcd_cmd("fhigh.val=%d", (int)g_cutoff_fH);
             break;
+        }
 
         case CMD_LEARN_CIRCUIT:
             break;
