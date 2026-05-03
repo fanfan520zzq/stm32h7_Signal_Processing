@@ -89,7 +89,7 @@ void CMD_Poll(void)
             int rin  = (int)R_in;
             int rout = (int)R_out;
             int rout_dft = (int)R_out_dft;
-            int g    = (int)(gain / 1000.0f);
+            int g    = (int)(gain);
 
             lcd_cmd("rin.val=%d", rin);
             lcd_cmd("rout.val=%d", rout);
@@ -99,7 +99,7 @@ void CMD_Poll(void)
         }
 
         case CMD_FREQ_RESPONSE:
-            FreqResponse_Measure();
+            FreqResponse_Sweep();
             break;
 
         case CMD_LEARN_CIRCUIT:

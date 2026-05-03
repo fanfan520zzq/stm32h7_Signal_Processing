@@ -100,3 +100,36 @@ void ADC2_SetRate_2400kHz(void)
     __HAL_TIM_SET_AUTORELOAD(&htim4, 10 - 1);
     __HAL_TIM_SET_COUNTER(&htim4, 0);
 }
+
+void ADC1_SetRate_10kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim3);
+    __HAL_TIM_SET_PRESCALER(&htim3, 240 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim3, 100 - 1);
+    __HAL_TIM_SET_COUNTER(&htim3, 0);
+}
+
+void ADC1_SetRate_100kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim3);
+    __HAL_TIM_SET_PRESCALER(&htim3, 24 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim3, 100 - 1);
+    __HAL_TIM_SET_COUNTER(&htim3, 0);
+}
+
+void ADC2_SetRate_100kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim4);
+    __HAL_TIM_SET_PRESCALER(&htim4, 24 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim4, 100 - 1);
+    __HAL_TIM_SET_COUNTER(&htim4, 0);
+}
+
+void ADC1_SetRate_2400kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim3);
+    __HAL_TIM_SET_PRESCALER(&htim3, 10 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim3, 10 - 1);
+    __HAL_TIM_SET_COUNTER(&htim3, 0);
+}
+

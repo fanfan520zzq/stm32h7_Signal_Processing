@@ -11,6 +11,7 @@
 
 extern float    g_gain_response[FREQ_POINTS];
 extern uint32_t g_freq_list[FREQ_POINTS];
+extern float    g_cutoff_fH;
 
 float Measure_Input_Resistance(void);
 float Measure_Input_Resistance_DFT(void);
@@ -20,6 +21,7 @@ float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sampl
 float Compute_RMS(const uint16_t *buf, uint32_t N);
 float DFT_Measure_CH1_Vpp(float f_sig, float f_sample);
 float DFT_Measure_CH2_Vpp(float f_sig, float f_sample);
-void  FreqResponse_Measure(void);
+void  FreqResponse_Sweep(void);
+float Measure_GainAtFreq(uint32_t freq_hz);
 
 #endif

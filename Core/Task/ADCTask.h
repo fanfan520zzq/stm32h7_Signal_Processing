@@ -25,5 +25,9 @@ void Start_Sample(void);
 void ADC2_Measure_Sync(uint16_t *buf, uint32_t len);
 void ADC2_SetRate_10kHz(void);
 void ADC2_SetRate_2400kHz(void);
+void ADC1_SetRate_10kHz(void);
+void ADC1_SetRate_2400kHz(void);
+void ADC2_SetRate_100kHz(void);
+void ADC1_SetRate_100kHz(void);
 
 #endif //IIT6_OSCILLISCOPE_ADC_H

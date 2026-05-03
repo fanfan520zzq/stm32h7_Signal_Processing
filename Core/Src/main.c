@@ -140,9 +140,7 @@ int main(void)
 
   AD9833_SetFixedOutput(1000, WAVE_SINE);
   AD9833_AmpSet(12);
-  int a=1;
-  AD9833_SetFixedOutput(4000, WAVE_SINE);
-   int k =1;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -151,11 +149,15 @@ int main(void)
   {
 
 
-    // float r_out_test = Measure_Output_Resistance();
-      FreqResponse_Measure();
-      for (int i=0;i< FREQ_POINTS;i++) {
-        printf("%.3f\n",g_gain_response[i]);
-      }
+    FreqResponse_Sweep();
+
+     for (int i=0;i< FREQ_POINTS;i++) {
+       printf("%.3f\n",g_gain_response[i]);
+     }
+
+     // float r_out_test = Measure_Input_Resistance();
+     //  FreqResponse_Fit();
+
       //在做测试，保留注释
       UART_Poll();
       CMD_Poll();
