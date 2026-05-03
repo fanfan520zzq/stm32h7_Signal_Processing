@@ -84,3 +84,19 @@ void ADC2_Measure_Sync(uint16_t *buf, uint32_t len) {
         buf[i] = ADC2_DMA_Buffer[i];
     }
 }
+
+void ADC2_SetRate_10kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim4);
+    __HAL_TIM_SET_PRESCALER(&htim4, 240 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim4, 100 - 1);
+    __HAL_TIM_SET_COUNTER(&htim4, 0);
+}
+
+void ADC2_SetRate_2400kHz(void)
+{
+    HAL_TIM_Base_Stop(&htim4);
+    __HAL_TIM_SET_PRESCALER(&htim4, 10 - 1);
+    __HAL_TIM_SET_AUTORELOAD(&htim4, 10 - 1);
+    __HAL_TIM_SET_COUNTER(&htim4, 0);
+}

@@ -158,7 +158,7 @@ static void delay_two_periods(uint32_t freq)
 void AD9833_CustomSweep_Blocking(void)
 {
     AD9833_SetFixedOutput(10, WAVE_SINE);
-    AD9833_AmpSet(14);
+
 
     uint32_t f;
 

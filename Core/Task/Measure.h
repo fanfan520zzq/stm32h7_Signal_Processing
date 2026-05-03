@@ -9,7 +9,7 @@
 
 #define FREQ_POINTS 480
 
-extern float    g_freq_response[FREQ_POINTS];
+extern float    g_gain_response[FREQ_POINTS];
 extern uint32_t g_freq_list[FREQ_POINTS];
 
 float Measure_Input_Resistance(void);
@@ -17,6 +17,7 @@ float Measure_Input_Resistance_DFT(void);
 float Measure_Output_Resistance(void);
 float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
 float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
+float Compute_RMS(const uint16_t *buf, uint32_t N);
 float DFT_Measure_CH1_Vpp(float f_sig, float f_sample);
 float DFT_Measure_CH2_Vpp(float f_sig, float f_sample);
 void  FreqResponse_Measure(void);

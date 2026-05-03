@@ -13,7 +13,6 @@
 #define LEN 2048
 
 #define ADC_SAMPLE_RATE_HZ   10000
-#define ADC2_SAMPLE_RATE_HZ  2400000
 
 extern uint16_t CH1_Buffer[LEN];
 extern uint16_t CH2_Buffer[LEN];
@@ -24,5 +23,7 @@ void ADC_Start_DMA(void);
 void Start_Sample(void);
 
 void ADC2_Measure_Sync(uint16_t *buf, uint32_t len);
+void ADC2_SetRate_10kHz(void);
+void ADC2_SetRate_2400kHz(void);
 
 #endif //IIT6_OSCILLISCOPE_ADC_H

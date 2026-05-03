@@ -14,11 +14,11 @@
 #define ADC2_N        2048
 #define ADC2_FS       2400000.0f
 
-float    g_freq_response[FREQ_POINTS];
+float    g_gain_response[FREQ_POINTS];
 uint32_t g_freq_list[FREQ_POINTS];
 
 /* ---- 计算均方根值(去直流后) ---- */
-static float Compute_RMS(const uint16_t *buf, uint32_t N)
+float Compute_RMS(const uint16_t *buf, uint32_t N)
 {
     float mean = 0;
     for (uint32_t i = 0; i < N; i++) mean += (float)buf[i];
@@ -78,64 +78,72 @@ float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sampl
     return 4.0f * mag / (float)N * ADC_TO_VOLT;
 }
 
-/* ---- 延时2个信号周期 ---- */
-static void wait_2_periods(uint32_t freq)
-{
-    float us = 2000000.0f / (float)freq;
-    if (us >= 1000.0f) {
-        HAL_Delay((uint32_t)(us / 1000.0f));
-    } else {
-        uint32_t loops = (uint32_t)(us * (SystemCoreClock / 1000000.0f) / 3.0f);
-        while (loops--) { __NOP(); }
-    }
-}
-
-/* ---- 幅频特性测量: 480频点, 阻塞式, 结果存入全局数组 ---- */
+/* ---- 幅频增益测量: 480频点, 增益=当前rms×5/1kHz基准rms ---- */
 void FreqResponse_Measure(void)
 {
-    AD9833_SetFixedOutput(10, WAVE_SINE);
-    AD9833_AmpSet(170);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+    AD9833_AmpSet(12);
 
     uint16_t adc_buf[ADC2_N];
 
+    /* 1kHz 基准: ADC1 CH1(PC5), 10kHz采样 */
+    AD9833_SetFixedOutput(1000, WAVE_SINE);
+    uint16_t d1, d2;
+    ADC1_Measure_Sync(&d1, &d2);
+    float vpp_ref = Goertzel_Vpp(CH1_Buffer, LEN, 1000.0f, 10000.0f);
+    float rms_ref = vpp_ref * 0.353553f / 25.0f;
+
     int idx = 0;
 
-    /* 低频: 10Hz → 1kHz, 200点 */
+    /* 低频: 10Hz → 1kHz, 200点, ADC2@10kHz */
+    ADC2_SetRate_10kHz();
     float step1 = (1000.0f - 10.0f) / 199.0f;
     for (int i = 0; i < 200; i++) {
         uint32_t f = (uint32_t)(10.0f + (float)i * step1);
         g_freq_list[idx] = f;
 
         AD9833_SetFrequency(FREQ_REG_0, f);
-        wait_2_periods(f);
         ADC2_Measure_Sync(adc_buf, ADC2_N);
-        g_freq_response[idx] = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, ADC2_FS);
+        float vpp = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, 10000.0f);
+        g_gain_response[idx] = vpp * 0.353553f * 5 / rms_ref;
         idx++;
     }
 
-    /* 中频: 1kHz → 80kHz, 80点 */
-    float step2 = (80000.0f - 1000.0f) / 79.0f;
-    for (int i = 0; i < 80; i++) {
-        uint32_t f = (uint32_t)(1000.0f + (float)i * step2);
+    /* 过渡: 1k/2k/3k/4kHz, ADC2@10kHz */
+    for (int t = 0; t < 4; t++) {
+        uint32_t f = 1000 + t * 1000;
         g_freq_list[idx] = f;
 
         AD9833_SetFrequency(FREQ_REG_0, f);
-        wait_2_periods(f);
         ADC2_Measure_Sync(adc_buf, ADC2_N);
-        g_freq_response[idx] = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, ADC2_FS);
+        float vpp = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, 10000.0f);
+        g_gain_response[idx] = vpp * 0.353553f * 5 / rms_ref;
         idx++;
     }
 
-    /* 高频: 80kHz → 1.2MHz, 200点 */
+    /* 中频: 5kHz → 80kHz, 76点, 2.4MHz采样 */
+    ADC2_SetRate_2400kHz();
+    for (int i = 0; i < 76; i++) {
+        uint32_t f = 5000 + i * 1000;
+        g_freq_list[idx] = f;
+
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        ADC2_Measure_Sync(adc_buf, ADC2_N);
+        float vpp = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, ADC2_FS);
+        g_gain_response[idx] = vpp * 0.353553f * 5 / rms_ref;
+        idx++;
+    }
+
+    /* 高频: 80kHz → 1.2MHz, 200点, 2.4MHz采样 */
     float step3 = (1200000.0f - 80000.0f) / 199.0f;
     for (int i = 0; i < 200; i++) {
         uint32_t f = (uint32_t)(80000.0f + (float)i * step3);
         g_freq_list[idx] = f;
 
         AD9833_SetFrequency(FREQ_REG_0, f);
-        wait_2_periods(f);
         ADC2_Measure_Sync(adc_buf, ADC2_N);
-        g_freq_response[idx] = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, ADC2_FS);
+        float vpp = Goertzel_Vpp(adc_buf, ADC2_N, (float)f, ADC2_FS);
+        g_gain_response[idx] = vpp * 0.353553f * 5 / rms_ref;
         idx++;
     }
 }
@@ -197,4 +205,34 @@ float DFT_Measure_CH2_Vpp(float f_sig, float f_sample)
     uint16_t dummy1, dummy2;
     ADC1_Measure_Sync(&dummy1, &dummy2);
     return Goertzel_Vpp(CH2_Buffer, LEN, f_sig, f_sample);
+}
+
+/* ---- 输出电阻测量 (RL=10kΩ, PD12继电器, R_out=V_oc×RL/diff) ---- */
+float Measure_Output_Resistance(void)
+{
+    ADC2_SetRate_10kHz();
+
+
+
+    uint16_t buf[ADC2_N];
+
+    /* 无负载: 继电器低 */
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_Delay(10);
+    ADC2_Measure_Sync(buf, ADC2_N);
+    float rms_oc = Compute_RMS(buf, ADC2_N);
+
+    /* 有负载: 继电器高, RL=10kΩ接入 */
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+    HAL_Delay(10);
+    ADC2_Measure_Sync(buf, ADC2_N);
+    float rms_L = Compute_RMS(buf, ADC2_N);
+
+    /* 恢复到空载 */
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+    float diff = fabsf(rms_oc - rms_L);
+    if (diff < 1e-6f) return 0.0f;
+
+    return diff * RS_OUT_OHM / rms_L;
 }

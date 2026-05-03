@@ -23,7 +23,7 @@
 
 void LCD_Update_Stats(float ch1_freq, float ch1_vpp, uint8_t ch1_type,
                       float ch2_freq, float ch2_vpp, uint8_t ch2_type);
-// LCD.h 新接口
-void LCD_Update_Waves(uint8_t Type, uint16_t Amplitude, uint8_t CH, float freq) ;
+void LCD_Update_Waves(uint8_t Type, uint16_t Amplitude, uint8_t CH, float freq);
+void lcd_cmd(const char *fmt, ...);
 
 #endif

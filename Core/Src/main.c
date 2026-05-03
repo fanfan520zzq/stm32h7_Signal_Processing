@@ -77,7 +77,11 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+int __io_putchar(int ch)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
+}
 /* USER CODE END 0 */
 
 /**
@@ -130,13 +134,15 @@ int main(void)
   CMD_Init();
   FFT_Init();
 
-    HAL_GPIO_WritePin(GPIOD,GPIO_PIN_12,GPIO_PIN_SET) ;
+   // HAL_GPIO_WritePin(GPIOD,GPIO_PIN_12,GPIO_PIN_SET) ;
   AD9833_Init();
 
 
   AD9833_SetFixedOutput(1000, WAVE_SINE);
   AD9833_AmpSet(12);
-  int k =1;
+  int a=1;
+  AD9833_SetFixedOutput(4000, WAVE_SINE);
+   int k =1;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -144,19 +150,18 @@ int main(void)
   while (1)
   {
 
-      float R_test=Measure_Input_Resistance();
-      float R_dft =Measure_Input_Resistance_DFT();
+
+    // float r_out_test = Measure_Output_Resistance();
+      FreqResponse_Measure();
+      for (int i=0;i< FREQ_POINTS;i++) {
+        printf("%.3f\n",g_gain_response[i]);
+      }
       //在做测试，保留注释
       UART_Poll();
       CMD_Poll();
       // ADC_Poll();
       // FFT_Poll();
 
-      uint16_t vpp1, vpp2;
-      ADC1_Measure_Sync(&vpp1, &vpp2);
-
-
-      float r_ohm = Measure_Input_Resistance();
 
       HAL_Delay(10);
 

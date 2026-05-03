@@ -10,6 +10,9 @@
 ## stm32发送说明
 
 数字控件:rin rout gain fhigh
+
+数字控件格式： rin.val=123/xFF/xFF/xFF
+
 曲线控件:s0
 文本控件:state reason
 
