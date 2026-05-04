@@ -9,8 +9,6 @@
 #include <string.h>
 #include <math.h>
 
-#define HF_FIT_N 6
-
 CircuitState Circuit_Learn(void)
 {
     CircuitState st;
@@ -22,10 +20,9 @@ CircuitState Circuit_Learn(void)
 
     /* 输入电阻 (DFT法) */
     st.r_in_dft = Measure_Input_Resistance_DFT();
-    /* CH1_Buffer已被填满, 顺势取含直流有效值 */
     st.rms_dc_in = Compute_RMS_DC(CH1_Buffer, LEN);
 
-    /* 输出电阻 + 含直流有效值 (PD12继电器, RL=10kΩ) */
+    /* 输出电阻 + 含直流有效值 */
     {
         ADC2_SetRate_10kHz();
         uint16_t buf_out[2048];
@@ -51,53 +48,43 @@ CircuitState Circuit_Learn(void)
     st.gain_1k  = Measure_GainAtFreq(1000);
     st.gain_10k = Measure_GainAtFreq(10000);
 
-
-
-    /* 高频6点 -3dB 扫描 */
-    static const uint32_t hf_freqs[HF_FIT_N] = {
-        140000, 160000, 180000, 200000, 220000, 250000
-    };
-    float hf_gain[HF_FIT_N];
-
-    ADC1_SetRate_2400kHz();
-    ADC2_SetRate_2400kHz();
-    uint16_t buf2[2048];
-
-    for (int i = 0; i < HF_FIT_N; i++) {
-        uint32_t f = hf_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
-
-        uint16_t d1, d2;
-        ADC1_Measure_Sync(&d1, &d2);
-        float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)f, 2400000.0f);
-        float rms_d = vpp_d * 0.353553f / 25.0f;
-
-        ADC2_Measure_Sync(buf2, 2048);
-        float vpp_n = Goertzel_Vpp(buf2, 2048, (float)f, 2400000.0f);
-        hf_gain[i] = vpp_n * 0.353553f * 5 / rms_d;
-    }
-
-    ADC1_SetRate_10kHz();
-    ADC2_SetRate_10kHz();
-
-    /* -3dB扫描 */
-    float max_g = 0;
-    for (int i = 0; i < HF_FIT_N; i++)
-        if (hf_gain[i] > max_g) max_g = hf_gain[i];
-    float thresh = max_g * 0.707f;
-    st.f_high = 0;
-    for (int i = HF_FIT_N - 1; i > 0; i--) {
-        if (hf_gain[i] > thresh && hf_gain[i-1] <= thresh) {
-            float t = (thresh - hf_gain[i]) / (hf_gain[i-1] - hf_gain[i]);
-            st.f_high = (float)hf_freqs[i] + t * (float)(hf_freqs[i-1] - hf_freqs[i]);
-            break;
-        }
-    }
-    if (st.f_high == 0 && hf_gain[0] > thresh)
-        st.f_high = (float)hf_freqs[0];
-
     /* 查表排错 */
     Circuit_Diagnose(&st);
+
+    /* normal时进入扫频分析 */
+    if (st.fault_code == FAULT_NONE) {
+        float gains[20] = {0};
+        Sweep_20_Raw(gains);
+
+        const uint32_t freqs_20[20] = {
+            30,80,150,200,280,350,500,800,1000,3000,10000,
+            30000,50000,80000,120000,140000,160000,180000,200000,250000
+        };
+        int i_m=0; float max_g=0;
+        for(int i=0;i<20;i++){ float g=gains[i]; if(g>max_g){ max_g=g; i_m=i; } }
+        float th=max_g*0.707f;
+
+        float f_low=0, fH=0;
+        for(int i=1;i<20;i++){
+            if(gains[i] >= th){
+                float a=gains[i-1], b=gains[i];
+                f_low=(float)freqs_20[i-1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i-1]);
+                break;
+            }
+        }
+        for(int i=19;i>=1;i--){
+            if(gains[i-1] >= th){
+                float a=gains[i], b=gains[i-1];
+                fH=(float)freqs_20[i]+(th-a)/(b-a)*((float)freqs_20[i-1]-(float)freqs_20[i]);
+                break;
+            }
+        }
+
+        if (fH > 75000.0f && fH < 95000.0f)
+            st.fault_code = FAULT_C3_x2;
+        else if (fH >= 250000.0f || fH <=0 )
+            st.fault_code = FAULT_C3_OPEN;
+    }
 
     return st;
 }
@@ -139,7 +126,7 @@ void Circuit_Diagnose(CircuitState *st)
         { st->fault_code = FAULT_C2_OPEN; return; }
 
     /* 4. r_in < 300, 看dc_out */
-    if (rin < 300.0f) {
+    if (rin < 1600.0f) {
         if (dc_out<0.02){ st->fault_code = FAULT_R4_SHORT; return; }
         if (dc_out < 0.3f)          { st->fault_code = FAULT_R3_OPEN; return; }
         if (dc_out > 0.3f && dc_out < 1.2f)

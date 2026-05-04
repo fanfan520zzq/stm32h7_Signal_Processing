@@ -37,6 +37,8 @@ reason: r1open r1short,r2...,r3...,r4...(same to r1)
 | `rin < 300` → `dc_out < 0.02` | **r4short** |
 | `rin < 300` → `dc_out < 0.3` | **r3open** |
 | `rin < 300` → `0.3 < dc_out < 1.2` | **r2open** |
+| 查表不命中 → 扫频: `75k < f_high < 95k` | **c3open** |
+| 查表不命中 → 扫频: `f_high ≥ 250k` | **c3x2** |
 | 以上都不匹配 | **normal** |
 
 ### 符号

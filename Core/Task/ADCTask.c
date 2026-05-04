@@ -75,7 +75,7 @@ void ADC1_Measure_Sync(uint16_t *vpp_ch1, uint16_t *vpp_ch2) {
 void ADC2_Measure_Sync(uint16_t *buf, uint32_t len) {
     g_adc2_done = 0;
     HAL_ADC_Stop_DMA(&hadc2);
-    HAL_TIM_Base_Start(&htim4);
+    HAL_TIM_Base_Start(&htim3);
     HAL_ADC_Start_DMA(&hadc2, (uint32_t*)ADC2_DMA_Buffer, len);
 
     while (!g_adc2_done) {}
@@ -83,22 +83,6 @@ void ADC2_Measure_Sync(uint16_t *buf, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) {
         buf[i] = ADC2_DMA_Buffer[i];
     }
-}
-
-void ADC2_SetRate_10kHz(void)
-{
-    HAL_TIM_Base_Stop(&htim4);
-    __HAL_TIM_SET_PRESCALER(&htim4, 240 - 1);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, 100 - 1);
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
-}
-
-void ADC2_SetRate_2400kHz(void)
-{
-    HAL_TIM_Base_Stop(&htim4);
-    __HAL_TIM_SET_PRESCALER(&htim4, 10 - 1);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, 10 - 1);
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
 }
 
 void ADC1_SetRate_10kHz(void)
@@ -117,19 +101,34 @@ void ADC1_SetRate_100kHz(void)
     __HAL_TIM_SET_COUNTER(&htim3, 0);
 }
 
-void ADC2_SetRate_100kHz(void)
-{
-    HAL_TIM_Base_Stop(&htim4);
-    __HAL_TIM_SET_PRESCALER(&htim4, 24 - 1);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, 100 - 1);
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
-}
-
 void ADC1_SetRate_2400kHz(void)
 {
     HAL_TIM_Base_Stop(&htim3);
     __HAL_TIM_SET_PRESCALER(&htim3, 10 - 1);
     __HAL_TIM_SET_AUTORELOAD(&htim3, 10 - 1);
     __HAL_TIM_SET_COUNTER(&htim3, 0);
+}
+
+void ADC2_SetRate_10kHz(void)  { ADC1_SetRate_10kHz(); }
+void ADC2_SetRate_100kHz(void) { ADC1_SetRate_100kHz(); }
+void ADC2_SetRate_2400kHz(void){ ADC1_SetRate_2400kHz(); }
+
+void ADC_DualSync_Sample(uint16_t *adc2_buf)
+{
+    g_adc1_done = 0;
+    g_adc2_done = 0;
+
+    HAL_ADC_Stop_DMA(&hadc1);
+    HAL_ADC_Stop_DMA(&hadc2);
+
+    HAL_TIM_Base_Start(&htim3);
+
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC1_DMA_Buffer, LEN * 2);
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)ADC2_DMA_Buffer, LEN);
+
+    while (!g_adc1_done || !g_adc2_done) {}
+
+    for (uint32_t i = 0; i < LEN; i++)
+        adc2_buf[i] = ADC2_DMA_Buffer[i];
 }
 

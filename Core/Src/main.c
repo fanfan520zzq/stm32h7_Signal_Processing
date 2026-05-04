@@ -72,6 +72,7 @@ extern void CMD_Init(void);
 extern void FFT_Init(void);
 extern void UART_Poll(void);
 extern void CMD_Poll(void);
+extern void CMD_Periodic_Tick(void);
 extern void ADC_Poll(void);
 extern void FFT_Poll(void);
 /* USER CODE END PFP */
@@ -124,7 +125,6 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   MX_ADC1_Init();
-  MX_TIM4_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
   MX_SPI1_Init();
@@ -143,51 +143,28 @@ int main(void)
   AD9833_AmpSet(12);
 
   /* USER CODE END 2 */
-  CircuitState state;
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
 
-    // state = Circuit_Learn() ;
+    //state = Circuit_Learn() ;
+
+    // float cg[18]; float fc;
+    // Sweep_Cutoff_Gain(cg, &fc);
     //   FreqResponse_Fit();
       // for (int i=0;i< FREQ_POINTS;i++) {
       //   printf("%.3f\n",g_gain_response[i]);
       // }
 
      // float r_out_test = Measure_Input_Resistance();
-     float gains[20]={0};
-     Sweep_20_Raw(gains);
 
-     /* 内联三特征点 */
-     const uint32_t freqs_20[20] = {
-         30,80,150,200,280,350,500,800,1000,3000,10000,
-         30000,50000,80000,120000,140000,160000,180000,200000,250000
-     };
-     int i_max=0; float max_g=0;
-     for(int i=0;i<20;i++){ float g=gains[i]; if(g>max_g){ max_g=g; i_max=i; } }
-     float f_mid=(float)freqs_20[i_max];
-     float th=max_g*0.707f;
-
-     float f_low=(float)freqs_20[0], f_high=(float)freqs_20[19];
-     for(int i=i_max; i>0; i--){
-         if(gains[i-1] < th){
-             float a=gains[i-1], b=gains[i];
-             if(b > a) f_low=(float)freqs_20[i-1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i-1]);
-             break;
-         }
-     }
-     for(int i=i_max; i<19; i++){
-         if(gains[i+1] < th){
-             float a=gains[i+1], b=gains[i];
-             if(b > a) f_high=(float)freqs_20[i+1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i+1]);
-             break;
-         }
-     }
 
       //在做测试，保留注释
       UART_Poll();
       CMD_Poll();
+      CMD_Periodic_Tick();
       // ADC_Poll();
       // FFT_Poll();
 

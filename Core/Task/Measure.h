@@ -28,6 +28,10 @@ float DFT_Measure_CH2_Vpp(float f_sig, float f_sample);
 void  FreqResponse_Sweep(void);
 void  FreqResponse_Fit(void);
 void  Sweep_20_Raw(float gains[20]);
+void  Sweep_LF_Raw(float gains[43]);
+void  Sweep_LF_Phase(float phases[27]);
+void  Phase_Expand(const float raw[27], float out[280], float *f_cutoff);
+void  Sweep_Cutoff_Gain(float gains[18], float *f_cutoff);
 float Measure_GainAtFreq(uint32_t freq_hz);
 
 typedef struct {

@@ -102,6 +102,30 @@ static float Goertzel_Vpp_Hann(const uint16_t *buf, uint32_t N,
     return 4.0f * mag / (float)N * ADC_TO_VOLT * 2.0f;
 }
 
+/* ---- Goertzel相位: 返回atan2(im,re)弧度 ---- */
+static float Goertzel_Phase(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
+{
+    float mean = 0;
+    for (uint32_t i = 0; i < N; i++) mean += (float)buf[i];
+    mean /= (float)N;
+
+    float k     = f_sig * (float)N / f_sample;
+    float omega = 2.0f * 3.1415926535f * k / (float)N;
+    float coeff = 2.0f * cosf(omega);
+
+    float s0 = 0, s1 = 0, s2 = 0;
+    for (uint32_t i = 0; i < N; i++) {
+        float x = (float)buf[i] - mean;
+        s0 = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+
+    float re = s1 - s2 * cosf(omega);
+    float im = s2 * sinf(omega);
+    return atan2f(im, re);
+}
+
 /* ---- 直接DFT: 无IIR累积误差，作为Goertzel对照 ---- */
 float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
 {
@@ -696,6 +720,133 @@ void Sweep_20_Raw(float gains[20])
 
     ADC1_SetRate_10kHz();
     ADC2_SetRate_10kHz();
+}
+
+/* ===================================================================
+ * 低频段扫频: 80~500Hz, 10Hz步进, 43点, 2周期RMS法
+ * 分母ADC1一次, 分子ADC2每频点采2周期→Compute_RMS
+ * =================================================================== */
+void Sweep_LF_Raw(float gains[43])
+{
+    AD9833_AmpSet(12);
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+
+    /* 分母一次 (ADC1全2048点) */
+    uint16_t d1, d2;
+    ADC1_Measure_Sync(&d1, &d2);
+    float rms_denom = Compute_RMS(CH1_Buffer, LEN) / 25.0f;
+
+    uint16_t buf[256];
+    int idx = 0;
+    for (uint32_t f = 80; f <= 500; f += 10) {
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        uint32_t n = 20000 / f;
+        if (n < 20) n = 20;
+        ADC2_Measure_Sync(buf, n);
+        float rms_num = Compute_RMS(buf, n);
+        gains[idx++] = rms_num * 5 / rms_denom;
+    }
+}
+
+/* ===================================================================
+ * 低频段相频: 40~300Hz/10Hz步/27点, TIM3同步双ADC+10kHz基准
+ * =================================================================== */
+void Sweep_LF_Phase(float phases[27])
+{
+    AD9833_AmpSet(12);
+    ADC1_SetRate_10kHz();
+
+    uint16_t buf2[LEN];
+    int idx = 0;
+
+    for (uint32_t f = 40; f <= 300; f += 10) {
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        ADC_DualSync_Sample(buf2);
+        float phase_out = Goertzel_Phase(buf2, LEN, (float)f, 10000.0f);
+        float phase_in  = Goertzel_Phase(CH1_Buffer, LEN, (float)f, 10000.0f);
+        float p = (phase_out - phase_in) * 180.0f / 3.14159265f;
+        if (p < -180.0f) p += 360.0f;
+        phases[idx++] = p;
+    }
+}
+
+/* ===================================================================
+ * 相频插值: 27点(40~300Hz)→280点 + 找-45°截止频率
+ * =================================================================== */
+void Phase_Expand(const float raw[27], float out[280], float *f_cutoff)
+{
+    /* 线性插值 27→280 */
+    for (int i = 0; i < 280; i++) {
+        float fi = 40.0f + (float)i * 260.0f / 279.0f;
+        float idx_f = (fi - 40.0f) / 10.0f;
+        int i0 = (int)idx_f;
+        if (i0 >= 26) i0 = 26;
+        int i1 = i0 + 1;
+        if (i1 > 26) i1 = 26;
+        float t = idx_f - (float)i0;
+        out[i] = raw[i0] + t * (raw[i1] - raw[i0]);
+    }
+
+    /* 找-45°截止频率 (从左扫描第一个≤45°的点) */
+    *f_cutoff = 300.0f;
+    for (int i = 0; i < 280; i++) {
+        if (out[i] <= 45.0f) {
+            if (i == 0) *f_cutoff = 40.0f;
+            else {
+                float a = out[i-1], b = out[i];
+                *f_cutoff = 40.0f + (float)(i-1) * 260.0f / 279.0f
+                          + (45.0f - a) / (b - a) * 260.0f / 279.0f;
+            }
+            break;
+        }
+    }
+}
+
+/* ===================================================================
+ * 截止区增益扫频: 125/140Hz + 250~265Hz步1Hz/18点 + 找-3dB
+ * =================================================================== */
+void Sweep_Cutoff_Gain(float gains[18], float *f_cutoff)
+{
+    static const uint32_t freqs[18] = {
+        125, 140,
+        250,251,252,253,254,255,256,257,258,259,260,261,262,263,264,265
+    };
+
+    AD9833_AmpSet(12);
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+
+    uint16_t buf2[2048];
+
+    for (int i = 0; i < 18; i++) {
+        uint32_t f = freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)f, 10000.0f);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n = Goertzel_Vpp(buf2, 2048, (float)f, 10000.0f);
+        gains[i] = vpp_n * 0.353553f * 5 / rms_d;
+    }
+
+    /* 找-3dB: max_g×0.707, 扫描250-265Hz */
+    float max_g = gains[0];
+    for (int i = 1; i < 18; i++)
+        if (gains[i] > max_g) max_g = gains[i];
+    float th = max_g * 0.707f;
+    *f_cutoff = 265.0f;
+    for (int i = 2; i < 18; i++) {
+        if (gains[i] <= th) {
+            if (i == 2) *f_cutoff = 250.0f;
+            else {
+                float a = gains[i-1], b = gains[i];
+                *f_cutoff = (float)freqs[i-1] + (th - a) / (b - a) * (float)(freqs[i] - freqs[i-1]);
+            }
+            break;
+        }
+    }
 }
 
 /* ===================================================================

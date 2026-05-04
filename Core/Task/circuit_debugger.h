@@ -20,6 +20,8 @@ typedef enum {
     FAULT_R2_SHORT,
     FAULT_R3_SHORT,
     FAULT_R4_SHORT,
+    FAULT_C3_OPEN,
+    FAULT_C3_x2,
     FAULT_DC_ONLY
 } FaultCode;
 
