@@ -35,6 +35,17 @@ float Compute_RMS(const uint16_t *buf, uint32_t N)
     return sqrtf(sum_sq / (float)N) * ADC_TO_VOLT;
 }
 
+/* ---- 含直流有效值(不去均值) ---- */
+float Compute_RMS_DC(const uint16_t *buf, uint32_t N)
+{
+    float sum_sq = 0;
+    for (uint32_t i = 0; i < N; i++) {
+        float v = (float)buf[i];
+        sum_sq += v * v;
+    }
+    return sqrtf(sum_sq / (float)N) * ADC_TO_VOLT;
+}
+
 /* ---- Goertzel 单点DFT: 返回已知频率分量的峰峰值(V) ---- */
 float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
 {
@@ -194,7 +205,32 @@ float Measure_Output_Resistance(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
 
     float diff = fabsf(rms_oc - rms_L);
-    if (diff < 1e-6f) return 0.0f;
+    if (diff < 0.0001f) return 0.0f;
+
+    return diff * RS_OUT_OHM / rms_L;
+}
+
+/* ---- 输出电阻DFT法 ---- */
+float Measure_Output_Resistance_DFT(void)
+{
+    ADC2_SetRate_10kHz();
+
+    uint16_t buf[ADC2_N];
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_Delay(10);
+    ADC2_Measure_Sync(buf, ADC2_N);
+    float rms_oc = Goertzel_Vpp(buf, ADC2_N, 1000.0f, 10000.0f) * 0.353553f;
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+    HAL_Delay(10);
+    ADC2_Measure_Sync(buf, ADC2_N);
+    float rms_L = Goertzel_Vpp(buf, ADC2_N, 1000.0f, 10000.0f) * 0.353553f;
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+    float diff = fabsf(rms_oc - rms_L);
+    if (diff < 0.0001f) return 0.0f;
 
     return diff * RS_OUT_OHM / rms_L;
 }
@@ -487,33 +523,84 @@ void FreqResponse_Fit(void)
         g_cutoff_fL = (kl > 0 && bl > 0) ? sqrtf(kl / bl) : 0;
     } else g_cutoff_fL = 0;
 
-    /* 高段最小二乘: Y=1/G² vs X=f² (6点, 140k~250kHz) → f_H */
-    #define HF_N 6
-    sx=0; sy=0; sxy=0; sx2=0;
-    n = 0;
-    for (int i = 14; i < 14 + HF_N; i++) {
-        float ff = (float)sweep_freqs[i];
-        float g  = sweep_gain[i];
-        if (g < 1e-6f) continue;
-        float x = ff * ff;
-        float y = 1.0f / (g * g);
-        sx += x; sy += y; sxy += x*y; sx2 += x*x;
-        n++;
-    }
-    if (n >= 2 && n*sx2 - sx*sx > 0) {
-        float kh = (n*sxy - sx*sy) / (n*sx2 - sx*sx);
-        float bh = (sy - kh*sx) / n;
-        g_cutoff_fH = (kh > 0 && bh > 0) ? sqrtf(bh / kh) : 0;
-    } else g_cutoff_fH = 0;
-
     /* A_mid = gain@1kHz */
     g_mid_gain = sweep_gain[8];
 
-    /* 双极点模型重建480点 */
-    float fL2 = g_cutoff_fL * g_cutoff_fL;
-    float fH2 = g_cutoff_fH * g_cutoff_fH;
+    /* 线性插值20点→480点, 从中扫描-3dB截止频率 */
     int idx = 0;
     float step1 = (1000.0f - 10.0f) / 199.0f;
+    for (int i = 0; i < 200; i++) {
+        float fi = 10.0f + (float)i * step1;
+        g_freq_list[idx] = (uint32_t)fi;
+        if (fi <= (float)sweep_freqs[0]) g_gain_response[idx] = sweep_gain[0];
+        else if (fi >= (float)sweep_freqs[SWEEP_POINTS-1]) g_gain_response[idx] = sweep_gain[SWEEP_POINTS-1];
+        else for (int j = 0; j < SWEEP_POINTS-1; j++) {
+            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
+                float t = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
+                g_gain_response[idx] = sweep_gain[j] + t * (sweep_gain[j+1] - sweep_gain[j]);
+                break;
+            }
+        }
+        idx++;
+    }
+    for (int t = 0; t < 4; t++) {
+        float fi = 1000.0f + t * 1000.0f;
+        g_freq_list[idx] = (uint32_t)fi;
+        for (int j = 0; j < SWEEP_POINTS-1; j++) {
+            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
+                float r = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
+                g_gain_response[idx] = sweep_gain[j] + r * (sweep_gain[j+1] - sweep_gain[j]);
+                break;
+            }
+        }
+        idx++;
+    }
+    for (int i = 0; i < 76; i++) {
+        float fi = 5000.0f + i * 1000.0f;
+        g_freq_list[idx] = (uint32_t)fi;
+        for (int j = 0; j < SWEEP_POINTS-1; j++) {
+            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
+                float r = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
+                g_gain_response[idx] = sweep_gain[j] + r * (sweep_gain[j+1] - sweep_gain[j]);
+                break;
+            }
+        }
+        idx++;
+    }
+    float step3 = (1200000.0f - 80000.0f) / 199.0f;
+    for (int i = 0; i < 200; i++) {
+        float fi = 80000.0f + (float)i * step3;
+        g_freq_list[idx] = (uint32_t)fi;
+        if (fi <= (float)sweep_freqs[0]) g_gain_response[idx] = sweep_gain[0];
+        else if (fi >= (float)sweep_freqs[SWEEP_POINTS-1]) g_gain_response[idx] = sweep_gain[SWEEP_POINTS-1];
+        else for (int j = 0; j < SWEEP_POINTS-1; j++) {
+            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
+                float t = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
+                g_gain_response[idx] = sweep_gain[j] + t * (sweep_gain[j+1] - sweep_gain[j]);
+                break;
+            }
+        }
+        idx++;
+    }
+
+    /* 从后向前扫描-3dB点 */
+    float max_g = 0;
+    for (int i = 0; i < FREQ_POINTS; i++)
+        if (g_gain_response[i] > max_g) max_g = g_gain_response[i];
+    float thresh = max_g * 0.707f;
+    g_cutoff_fH = 0;
+    for (int i = FREQ_POINTS - 1; i >= 0; i--) {
+        if (g_gain_response[i] > thresh) {
+            g_cutoff_fH = (float)g_freq_list[i];
+            break;
+        }
+    }
+
+    /* 双极点模型重建覆盖插值曲线(光滑) */
+    float fL2 = g_cutoff_fL * g_cutoff_fL;
+    float fH2 = g_cutoff_fH * g_cutoff_fH;
+    idx = 0;
+    step1 = (1000.0f - 10.0f) / 199.0f;
     for (int i = 0; i < 200; i++) {
         float f = 10.0f + (float)i * step1;
         float f2 = f * f;
@@ -535,7 +622,7 @@ void FreqResponse_Fit(void)
         g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
         idx++;
     }
-    float step3 = (1200000.0f - 80000.0f) / 199.0f;
+    step3 = (1200000.0f - 80000.0f) / 199.0f;
     for (int i = 0; i < 200; i++) {
         float f = 80000.0f + (float)i * step3;
         float f2 = f * f;
@@ -543,4 +630,119 @@ void FreqResponse_Fit(void)
         g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
         idx++;
     }
+}
+
+/* ===================================================================
+ * 20点粗测: 严格参照FreqResponse_Fit的测量部分, Goertzel_Vpp_Hann
+ * =================================================================== */
+void Sweep_20_Raw(float gains[20])
+{
+    static const uint32_t sweep_freqs[SWEEP_POINTS] = {
+        30, 80, 150, 200, 280, 350,
+        500, 800, 1000, 3000, 10000,
+        30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
+    };
+    uint16_t buf2[2048];
+
+    AD9833_AmpSet(12);
+
+    /* 阶段1: 10kHz (6点) */
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+    for (int i = 0; i < STAGE1_N; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)f, 10000.0f);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n = Goertzel_Vpp(buf2, 2048, (float)f, 10000.0f);
+        gains[i] = vpp_n * 0.353553f * 5 / rms_d;
+    }
+
+    /* 阶段2: 100kHz (5点), Hann窗 */
+    ADC1_SetRate_100kHz();
+    ADC2_SetRate_100kHz();
+    for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp_Hann(CH1_Buffer, LEN, (float)f, 100000.0f);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n = Goertzel_Vpp_Hann(buf2, 2048, (float)f, 100000.0f);
+        gains[i] = vpp_n * 0.353553f * 5 / rms_d;
+    }
+
+    /* 阶段3: 2.4MHz (9点), Hann窗Goertzel, k≥8.5 */
+    ADC1_SetRate_2400kHz();
+    ADC2_SetRate_2400kHz();
+    for (int i = STAGE1_N + STAGE2_N; i < SWEEP_POINTS; i++) {
+        uint32_t f = sweep_freqs[i];
+        AD9833_SetFrequency(FREQ_REG_0, f);
+        uint16_t d1, d2;
+        ADC1_Measure_Sync(&d1, &d2);
+        float vpp_d = Goertzel_Vpp_Hann(CH1_Buffer, LEN, (float)f, ADC2_FS);
+        float vpp_d_test = Compute_RMS(CH1_Buffer, LEN);
+        float rms_d = vpp_d * 0.353553f / 25.0f;
+        ADC2_Measure_Sync(buf2, 2048);
+        float vpp_n_test = Compute_RMS(CH2_Buffer, LEN);
+        float vpp_n = Goertzel_Vpp_Hann(buf2, 2048, (float)f, ADC2_FS);
+        gains[i] = vpp_n * 0.353553f * 125 / vpp_d_test;
+    }
+
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+}
+
+/* ===================================================================
+ * 从20点增益扫描三特征点: O(20), 复用Sweep_20_Raw数据
+ * =================================================================== */
+Sweep3Point Sweep_Find_3Points(const float gains[20])
+{
+    static const uint32_t freqs[20] = {
+        30, 80, 150, 200, 280, 350,
+        500, 800, 1000, 3000, 10000,
+        30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
+    };
+    Sweep3Point pt = {0};
+
+    /* 最大增益 */
+    int i_max = 0;
+    for (int i = 1; i < 20; i++)
+        if (gains[i] > gains[i_max]) i_max = i;
+    pt.max_gain = gains[i_max];
+    pt.f_mid = (float)freqs[i_max];
+
+    float thresh = pt.max_gain * 0.707f;
+
+    /* 下限: 从左扫描 */
+    if (gains[0] > thresh) {
+        pt.f_low = (float)freqs[0];
+    } else {
+        for (int i = 1; i < 20; i++) {
+            if (gains[i] > thresh) {
+                float t = (thresh - gains[i-1]) / (gains[i] - gains[i-1]);
+                pt.f_low = (float)freqs[i-1] + t * (float)(freqs[i] - freqs[i-1]);
+                break;
+            }
+        }
+    }
+
+    /* 上限: 从右扫描 */
+    if (gains[19] > thresh) {
+        pt.f_high = (float)freqs[19];
+    } else {
+        for (int i = 18; i >= 0; i--) {
+            if (gains[i] > thresh) {
+                float t = (thresh - gains[i+1]) / (gains[i] - gains[i+1]);
+                pt.f_high = (float)freqs[i+1] + t * (float)(freqs[i] - freqs[i+1]);
+                break;
+            }
+        }
+    }
+
+    return pt;
 }

@@ -8,6 +8,8 @@
 #include "ad9833_hal.h"
 #include "Measure.h"
 #include "LCD.h"
+#include "circuit_debugger.h"
+#include <string.h>
 #include <math.h>
 
 uint8_t g_is_adc_continuous = 0;
@@ -122,10 +124,21 @@ void CMD_Poll(void)
         }
 
         case CMD_LEARN_CIRCUIT:
-            break;
+        case CMD_FAULT_DETECT: {
+            CircuitState st = Circuit_Learn();
 
-        case CMD_FAULT_DETECT:
+            static const char *reasons[] = {
+                "normal", "c1open", "r1open", "r2open",
+                "r3open", "r4open", "c2open",
+                "r1short","r2short","r3short","r4short","dconly"
+            };
+            const char *state_str = (st.fault_code == FAULT_NONE) ? "normal" : "bug";
+            const char *reason_str = reasons[st.fault_code];
+
+            lcd_cmd("state.txt=\"%s\"", state_str);
+            lcd_cmd("reason.txt=\"%s\"", reason_str);
             break;
+        }
 
         default:
             break;

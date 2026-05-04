@@ -72,6 +72,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
         Core/Task/ADCTask.c
         Core/Task/ADCTask.h
+        Core/Task/circuit_debugger.c
+        Core/Task/circuit_debugger.h
 
         Core/Task/FFTTask.c
         Core/Task/FFTTask.h

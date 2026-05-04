@@ -37,6 +37,7 @@
 #include <math.h>
 
 #include "ad9833_hal.h"
+#include "circuit_debugger.h"
 #include "Measure.h"
 /* USER CODE END Includes */
 
@@ -142,20 +143,22 @@ int main(void)
   AD9833_AmpSet(12);
 
   /* USER CODE END 2 */
-
+  CircuitState state;
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
 
-
-      FreqResponse_Fit();
-      for (int i=0;i< FREQ_POINTS;i++) {
-        printf("%.3f\n",g_gain_response[i]);
-      }
+    // state = Circuit_Learn() ;
+    //   FreqResponse_Fit();
+      // for (int i=0;i< FREQ_POINTS;i++) {
+      //   printf("%.3f\n",g_gain_response[i]);
+      // }
 
      // float r_out_test = Measure_Input_Resistance();
-     //  FreqResponse_Fit();
+     float gains[20]={0};
+     Sweep_20_Raw(gains);
+     Sweep3Point pt = Sweep_Find_3Points(gains);
 
       //在做测试，保留注释
       UART_Poll();

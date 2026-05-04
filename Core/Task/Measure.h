@@ -18,13 +18,25 @@ extern float    g_mid_gain;
 float Measure_Input_Resistance(void);
 float Measure_Input_Resistance_DFT(void);
 float Measure_Output_Resistance(void);
+float Measure_Output_Resistance_DFT(void);
 float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
 float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
 float Compute_RMS(const uint16_t *buf, uint32_t N);
+float Compute_RMS_DC(const uint16_t *buf, uint32_t N);
 float DFT_Measure_CH1_Vpp(float f_sig, float f_sample);
 float DFT_Measure_CH2_Vpp(float f_sig, float f_sample);
 void  FreqResponse_Sweep(void);
 void  FreqResponse_Fit(void);
+void  Sweep_20_Raw(float gains[20]);
 float Measure_GainAtFreq(uint32_t freq_hz);
+
+typedef struct {
+    float f_low;
+    float f_mid;
+    float f_high;
+    float max_gain;
+} Sweep3Point;
+
+Sweep3Point Sweep_Find_3Points(const float gains[20]);
 
 #endif

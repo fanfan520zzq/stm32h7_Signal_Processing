@@ -21,5 +21,31 @@ reason: r1open r1short,r2...,r3...,r4...(same to r1)
         c1open c1*2,c2...,c3...(same to c1)
 
 
-绘制曲线控件：CMD.c中，在接收到对应命令FreqResponse_Sweep后将g_gain_response变为整数数组然后addt曲线透传出来；
-再lcd_cmd("fhigh.val=%d", (int)g_cutoff_fH);
+## 故障查表决策规则
+
+优先级从上到下，首个命中即返回。
+
+| 条件 | 故障码 |
+|---|---|---|
+| `rin > 100k` | **c1open** |
+| `dc_out > 2.15` → `9k < rin < 12k` → `g1k < 1` | **r4open** |
+| `dc_out > 2.15` → `12k < rin < 15.5k` | **r1open** |
+| `dc_out > 2.15` → `rout < 30` → `rin > 2k` | **r3short** |
+| `dc_out > 2.15` → `rin < 30` → `rout < 5` | **r1short** |
+| `dc_out > 2.15` → `800 < rout < 1000` | **r2short** |
+| `9k < rin < 15k` → `g1k > 1` | **c2open** |
+| `rin < 300` → `dc_out < 0.02` | **r4short** |
+| `rin < 300` → `dc_out < 0.3` | **r3open** |
+| `rin < 300` → `0.3 < dc_out < 1.2` | **r2open** |
+| 以上都不匹配 | **normal** |
+
+### 符号
+- `rin` = r_in_dft (Ω), `rout` = r_out_rms (Ω)
+- `g1k` = gain_1k, `g10k` = gain_10k
+- `dc_out` = rms_dc_out (V)
+
+### LCD输出
+```
+state.txt="normal"  或  "bug"
+reason.txt="c1open"  / "r1short" / "normal" ...
+```
