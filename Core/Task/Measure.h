@@ -37,6 +37,6 @@ typedef struct {
     float max_gain;
 } Sweep3Point;
 
-Sweep3Point Sweep_Find_3Points(const float gains[20]);
+void  Sweep_Find_3Points(const float gains[20], Sweep3Point *pt);
 
 #endif

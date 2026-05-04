@@ -7,6 +7,7 @@
 #include "ADCTask.h"
 #include "ad9833_hal.h"
 #include <math.h>
+#include <string.h>
 
 #define RS_IN_OHM     10000.0f
 #define RS_OUT_OHM    10000.0f
@@ -700,32 +701,32 @@ void Sweep_20_Raw(float gains[20])
 /* ===================================================================
  * 从20点增益扫描三特征点: O(20), 复用Sweep_20_Raw数据
  * =================================================================== */
-Sweep3Point Sweep_Find_3Points(const float gains[20])
+void Sweep_Find_3Points(const float gains[20], Sweep3Point *pt)
 {
     static const uint32_t freqs[20] = {
         30, 80, 150, 200, 280, 350,
         500, 800, 1000, 3000, 10000,
         30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
     };
-    Sweep3Point pt = {0};
+    memset(pt, 0, sizeof(*pt));
 
     /* 最大增益 */
     int i_max = 0;
     for (int i = 1; i < 20; i++)
         if (gains[i] > gains[i_max]) i_max = i;
-    pt.max_gain = gains[i_max];
-    pt.f_mid = (float)freqs[i_max];
+    pt->max_gain = gains[i_max];
+    pt->f_mid = (float)freqs[i_max];
 
-    float thresh = pt.max_gain * 0.707f;
+    float thresh = pt->max_gain * 0.707f;
 
     /* 下限: 从左扫描 */
     if (gains[0] > thresh) {
-        pt.f_low = (float)freqs[0];
+        pt->f_low = (float)freqs[0];
     } else {
         for (int i = 1; i < 20; i++) {
             if (gains[i] > thresh) {
                 float t = (thresh - gains[i-1]) / (gains[i] - gains[i-1]);
-                pt.f_low = (float)freqs[i-1] + t * (float)(freqs[i] - freqs[i-1]);
+                pt->f_low = (float)freqs[i-1] + t * (float)(freqs[i] - freqs[i-1]);
                 break;
             }
         }
@@ -733,16 +734,14 @@ Sweep3Point Sweep_Find_3Points(const float gains[20])
 
     /* 上限: 从右扫描 */
     if (gains[19] > thresh) {
-        pt.f_high = (float)freqs[19];
+        pt->f_high = (float)freqs[19];
     } else {
         for (int i = 18; i >= 0; i--) {
             if (gains[i] > thresh) {
                 float t = (thresh - gains[i+1]) / (gains[i] - gains[i+1]);
-                pt.f_high = (float)freqs[i+1] + t * (float)(freqs[i] - freqs[i+1]);
+                pt->f_high = (float)freqs[i+1] + t * (float)(freqs[i] - freqs[i+1]);
                 break;
             }
         }
     }
-
-    return pt;
 }

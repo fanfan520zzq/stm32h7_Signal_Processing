@@ -158,7 +158,32 @@ int main(void)
      // float r_out_test = Measure_Input_Resistance();
      float gains[20]={0};
      Sweep_20_Raw(gains);
-     Sweep3Point pt = Sweep_Find_3Points(gains);
+
+     /* 内联三特征点 */
+     const uint32_t freqs_20[20] = {
+         30,80,150,200,280,350,500,800,1000,3000,10000,
+         30000,50000,80000,120000,140000,160000,180000,200000,250000
+     };
+     int i_max=0; float max_g=0;
+     for(int i=0;i<20;i++){ float g=gains[i]; if(g>max_g){ max_g=g; i_max=i; } }
+     float f_mid=(float)freqs_20[i_max];
+     float th=max_g*0.707f;
+
+     float f_low=(float)freqs_20[0], f_high=(float)freqs_20[19];
+     for(int i=i_max; i>0; i--){
+         if(gains[i-1] < th){
+             float a=gains[i-1], b=gains[i];
+             if(b > a) f_low=(float)freqs_20[i-1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i-1]);
+             break;
+         }
+     }
+     for(int i=i_max; i<19; i++){
+         if(gains[i+1] < th){
+             float a=gains[i+1], b=gains[i];
+             if(b > a) f_high=(float)freqs_20[i+1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i+1]);
+             break;
+         }
+     }
 
       //在做测试，保留注释
       UART_Poll();
