@@ -1,0 +1,36 @@
+首先判断 r_in_rms : 在10w以上时，判断c1open;
+                rin_rms大于8000:输出电阻大于2500？如果是r1open
+                如果小于，根据gain值，若gain小于1，r4open
+                如果大于，c2 open
+
+
+
+当r_in_rms过小（小于200）时 ： r_in_rms 在50以内 ，10k_gain>50，r2short;
+                             r_in_rms > 100 , 2000<r_out_rms<3000,r4 short 
+                                            ，r_out_rms>6000 ,r2open；
+
+                            
+                            r_in_rms在（80-130）内，输出电阻在2000-3000，r4short，
+                            r_in_rms > 50 ,10k_gain<50 r1_short
+                            r_in_rms在（150-200）内，输出电阻在2000-3000，r3_open；
+
+
+                            rms_dc_out大于2.15时候，r_out_rms <30 - r3_short,
+                            r_out_rms in(800,900),r2_short
+                            r_out_rms > 8000 , 
+
+
+                            当 r_in_dft在300以内，看rms_dc_out，若小于0.3，r3_open,
+                            若在（0.3，1.2），r2_open
+
+
+                            当 r_in_dft在9000-15000，看增益，若增益小于1，r1_open
+                            若增益大于1，c2_open
+
+                            | `dc_out > 2.15` → `rout < 30` | **r3short** | 
+                            追加判断规则，当满足以上再满足r_in_dft>2000,r3short；dc_out>2.15,r_in_dft<30,r_out_rms<5----->r1_short
+
+
+
+
+
