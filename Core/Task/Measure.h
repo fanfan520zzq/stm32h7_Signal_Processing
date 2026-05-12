@@ -15,6 +15,10 @@ extern float    g_cutoff_fH;
 extern float    g_cutoff_fL;
 extern float    g_mid_gain;
 
+float Measure_RMS_ADC1(void);
+float Measure_RMS_ADC3(void);
+void  Measure_RMS_Both(float *rms1, float *rms3);
+
 float Measure_Input_Resistance(void);
 float Measure_Input_Resistance_DFT(void);
 float Measure_Output_Resistance(void);
@@ -23,6 +27,7 @@ float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
 float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
 float Compute_RMS(const uint16_t *buf, uint32_t N);
 float Compute_RMS_DC(const uint16_t *buf, uint32_t N);
+float Measure_Vpp_Filtered(const uint16_t *buf, uint32_t N);
 float DFT_Measure_CH1_Vpp(float f_sig, float f_sample);
 float DFT_Measure_CH2_Vpp(float f_sig, float f_sample);
 void  FreqResponse_Sweep(void);

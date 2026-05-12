@@ -34,8 +34,7 @@ static void do_measure_io(void)
     AD9833_SetFixedOutput(1000, WAVE_SINE);
     AD9833_AmpSet(12);
 
-    uint16_t d1, d2;
-    ADC1_Measure_Sync(&d1, &d2);
+    ADC_Acquire();
 
     float vpp1 = Goertzel_Vpp(CH1_Buffer, LEN, 1000.0f, 10000.0f);
     float vpp2 = Goertzel_Vpp(CH2_Buffer, LEN, 1000.0f, 10000.0f);
@@ -50,13 +49,13 @@ static void do_measure_io(void)
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
     HAL_Delay(10);
-    ADC2_Measure_Sync(buf, 2048);
+    ADC2_Acquire(buf, 2048);
     float rms_oc = Compute_RMS(buf, 2048);
     float rms_oc_dft = Goertzel_Vpp(buf, 2048, 1000.0f, 10000.0f) * 0.353553f;
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
     HAL_Delay(10);
-    ADC2_Measure_Sync(buf, 2048);
+    ADC2_Acquire(buf, 2048);
     float rms_L = Compute_RMS(buf, 2048);
     float rms_L_dft = Goertzel_Vpp(buf, 2048, 1000.0f, 10000.0f) * 0.353553f;
 

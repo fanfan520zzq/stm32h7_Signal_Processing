@@ -10,25 +10,25 @@
 
 #define CH1 1
 #define CH2 2
-#define LEN 2048
+#define LEN 2000
 
 #define ADC_SAMPLE_RATE_HZ   10000
 
 extern uint16_t CH1_Buffer[LEN];
 extern uint16_t CH2_Buffer[LEN];
-extern uint16_t ADC1_DMA_Buffer[LEN * 2];
+extern uint16_t ADC1_DMA_Buffer[LEN];
+extern uint16_t ADC3_DMA_Buffer[LEN];
 
-void ADC1_Measure_Sync(uint16_t *vpp_ch1, uint16_t *vpp_ch2);
+void ADC_Acquire(void);
 void ADC_Start_DMA(void);
 void Start_Sample(void);
 
-void ADC2_Measure_Sync(uint16_t *buf, uint32_t len);
+void ADC2_Acquire(uint16_t *buf, uint32_t len);
 void ADC2_SetRate_10kHz(void);
 void ADC2_SetRate_2400kHz(void);
 void ADC1_SetRate_10kHz(void);
 void ADC1_SetRate_2400kHz(void);
 void ADC2_SetRate_100kHz(void);
 void ADC1_SetRate_100kHz(void);
-void ADC_DualSync_Sample(uint16_t *adc2_buf);
 
 #endif //IIT6_OSCILLISCOPE_ADC_H

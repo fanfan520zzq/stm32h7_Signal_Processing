@@ -29,13 +29,13 @@ CircuitState Circuit_Learn(void)
 
         HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
         HAL_Delay(10);
-        ADC2_Measure_Sync(buf_out, 2048);
+        ADC2_Acquire(buf_out, 2048);
         float rms_oc_dc = Compute_RMS_DC(buf_out, 2048);
         st.rms_dc_out = rms_oc_dc;
 
         HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
         HAL_Delay(10);
-        ADC2_Measure_Sync(buf_out, 2048);
+        ADC2_Acquire(buf_out, 2048);
         float rms_L_dc = Compute_RMS_DC(buf_out, 2048);
 
         HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);

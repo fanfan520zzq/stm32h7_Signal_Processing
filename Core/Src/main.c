@@ -139,6 +139,7 @@ int main(void)
   MX_TIM13_Init();
   MX_SPI1_Init();
   MX_DAC1_Init();
+  MX_ADC3_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
