@@ -9,7 +9,7 @@
 #include <math.h>
 #include <string.h>
 
-#define RS_IN_OHM     10000.0f
+#define RS_IN_OHM     4700.0f
 #define RS_OUT_OHM    10000.0f
 #define ADC_TO_VOLT   (3.3f / 65535.0f)
 #define ADC2_N        2048
@@ -158,7 +158,7 @@ float Measure_Input_Resistance(void)
     float rms2 = Compute_RMS(CH2_Buffer, LEN);
 
     rms1 = rms1 / 25;
-    rms2 = rms2 / 10;
+    rms2 = rms2 / 25;
 
     float diff = fabsf(rms1 - rms2);
     if (diff < 1e-6f) return 0.0f;
@@ -260,34 +260,29 @@ float Measure_Output_Resistance_DFT(void)
     return diff * RS_OUT_OHM / rms_L;
 }
 
-/* ---- 单频点增益测试 (设频→双ADC采样→Goertzel→返回增益) ---- */
+/* ---- 单频点增益测试 (设频→双ADC采样→RMS→返回增益) ---- */
 float Measure_GainAtFreq(uint32_t freq_hz)
 {
-    AD9833_SetFrequency(FREQ_REG_0, freq_hz);
-
-    float f_sample;
+    AD9833_SetFixedOutput(freq_hz, WAVE_SINE);
     if (freq_hz <= 350) {
         ADC1_SetRate_10kHz();   ADC2_SetRate_10kHz();
-        f_sample = 10000.0f;
     } else if (freq_hz <= 10000) {
         ADC1_SetRate_100kHz();  ADC2_SetRate_100kHz();
-        f_sample = 100000.0f;
     } else {
         ADC1_SetRate_2400kHz(); ADC2_SetRate_2400kHz();
-        f_sample = ADC2_FS;
     }
 
     uint16_t buf2[2048];
     uint16_t d1, d2;
 
     ADC1_Measure_Sync(&d1, &d2);
-    float vpp_d = Goertzel_Vpp(CH1_Buffer, LEN, (float)freq_hz, f_sample);
-    float rms_d = vpp_d * 0.353553f / 25.0f;
+    float rms_d = Compute_RMS(CH1_Buffer, LEN) ;
 
     ADC2_Measure_Sync(buf2, 2048);
-    float vpp_n = Goertzel_Vpp(buf2, 2048, (float)freq_hz, f_sample);
+    float rms_n = Compute_RMS(buf2, 2048);
 
-    return vpp_n * 0.353553f * 5 / rms_d;
+    if (rms_d < 1e-6f) return 0.0f;
+    return rms_n * 125.0f / rms_d;
 }
 
 /* ===================================================================

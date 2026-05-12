@@ -16,7 +16,7 @@ CircuitState Circuit_Learn(void)
     st.valid = 1;
 
     AD9833_SetFixedOutput(1000, WAVE_SINE);
-    AD9833_AmpSet(12);
+    AD9833_AmpSet(14);
 
     /* 输入电阻 (DFT法) */
     st.r_in_dft = Measure_Input_Resistance_DFT();

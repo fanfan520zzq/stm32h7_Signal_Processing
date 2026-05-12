@@ -79,11 +79,21 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int __io_putchar(int ch)
+#ifdef __GNUC__
+/* For GCC compiler (STM32CubeIDE/JetBrains CLion) */
+int _write(int file, char *ptr, int len)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)ptr, len, HAL_MAX_DELAY);
+  return len;
+}
+#else
+/* For Arm Compiler (Keil MDK) */
+int fputc(int ch, FILE *f)
 {
   HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
   return ch;
 }
+#endif
 /* USER CODE END 0 */
 
 /**
@@ -140,8 +150,29 @@ int main(void)
 
 
   AD9833_SetFixedOutput(1000, WAVE_SINE);
-  AD9833_AmpSet(12);
-
+  AD9833_AmpSet(14);
+  CircuitState state ;
+  // extern uint16_t CH1_Buffer[];
+  // static float main_ch1_norm[4096];
+  // uint16_t d1_dump, d2_dump;
+  // ADC1_Measure_Sync(&d1_dump, &d2_dump);
+  //
+  // float sum = 0.0f;
+  // for (int i = 0; i < 4096; i++) {
+  //   main_ch1_norm[i] = (float)CH1_Buffer[i] * (3.3f / 65535.0f);
+  //   sum += main_ch1_norm[i];
+  // }
+  // float mean = sum / 4096.0f;
+  //
+  // float sum_sq = 0.0f;
+  // for (int i = 0; i < 4096; i++) {
+  //   float ac = main_ch1_norm[i] - mean;
+  //   sum_sq += ac * ac;
+  // }
+  // float main_ch1_rms = sqrtf(sum_sq / 4096.0f);
+  //
+  // // You can set a breakpoint on the following line to observe main_ch1_norm and main_ch1_rms
+  // __NOP();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -149,7 +180,13 @@ int main(void)
   while (1)
   {
 
-    //state = Circuit_Learn() ;
+    float r_in_test = Measure_Input_Resistance();
+    float r_out_test = Measure_Output_Resistance();
+    float gain_1k  = Measure_GainAtFreq(1000);
+    HAL_Delay(500);
+    float gain_10k = Measure_GainAtFreq(10000);
+
+
 
     // float cg[18]; float fc;
     // Sweep_Cutoff_Gain(cg, &fc);
@@ -158,7 +195,7 @@ int main(void)
       //   printf("%.3f\n",g_gain_response[i]);
       // }
 
-     // float r_out_test = Measure_Input_Resistance();
+
 
 
       //在做测试，保留注释

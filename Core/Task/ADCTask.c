@@ -5,6 +5,8 @@
 #include "ADCTask.h"
 #include "tim.h"
 
+#include <stdio.h>
+
 uint8_t start_adc_flag = 0;
 uint8_t fft_ready_flag = 0;
 
@@ -24,6 +26,10 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
         for (uint32_t i = 0; i < LEN; i++) {
             CH1_Buffer[i] = ADC1_DMA_Buffer[i * 2];
             CH2_Buffer[i] = ADC1_DMA_Buffer[i * 2 + 1];
+        }
+        for (int i=0;i<LEN;i++) {
+            printf("%.3f,",(float)(CH1_Buffer[i]) * (3.3f / 65535.0f));
+            printf("%.3f\n",(float)(CH2_Buffer[i]) * (3.3f / 65535.0f));
         }
 
         g_adc1_done = 1;
