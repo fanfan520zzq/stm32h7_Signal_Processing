@@ -17,6 +17,7 @@
 extern uint16_t CH1_Buffer[LEN];
 extern uint16_t CH2_Buffer[LEN];
 extern uint16_t ADC1_DMA_Buffer[LEN];
+extern uint16_t ADC2_DMA_Buffer[LEN];
 extern uint16_t ADC3_DMA_Buffer[LEN];
 
 void ADC_Acquire(void);

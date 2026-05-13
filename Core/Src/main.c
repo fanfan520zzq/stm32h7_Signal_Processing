@@ -152,7 +152,7 @@ int main(void)
 
   AD9833_SetFixedOutput(1000, WAVE_SINE);
   AD9833_AmpSet(14);
-  CircuitState state ;
+  // CircuitState state ;
   // extern uint16_t CH1_Buffer[];
   // static float main_ch1_norm[4096];
   // uint16_t d1_dump, d2_dump;
@@ -181,17 +181,17 @@ int main(void)
   while (1)
   {
 
-    float r_in_test = Measure_Input_Resistance();
-    float r_out_test = Measure_Output_Resistance();
-    float gain_1k  = Measure_GainAtFreq(1000);
-    HAL_Delay(500);
-    float gain_10k = Measure_GainAtFreq(10000);
+    // float r_in_test = Measure_Input_Resistance();
+    // float r_out_test = Measure_Output_Resistance();
+    // float gain_1k  = Measure_GainAtFreq(1000);
+    // HAL_Delay(500);
+    // float gain_10k = Measure_GainAtFreq(10000);
+
+    // FreqResponse_Fit();
+
+    Circuit_Learn();
 
 
-
-    // float cg[18]; float fc;
-    // Sweep_Cutoff_Gain(cg, &fc);
-    //   FreqResponse_Fit();
       // for (int i=0;i< FREQ_POINTS;i++) {
       //   printf("%.3f\n",g_gain_response[i]);
       // }
@@ -200,9 +200,9 @@ int main(void)
 
 
       //在做测试，保留注释
-      UART_Poll();
-      CMD_Poll();
-      CMD_Periodic_Tick();
+      // UART_Poll();
+      // CMD_Poll();
+      // CMD_Periodic_Tick();
       // ADC_Poll();
       // FFT_Poll();
 

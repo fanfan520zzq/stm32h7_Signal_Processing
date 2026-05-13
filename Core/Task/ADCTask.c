@@ -79,13 +79,16 @@ void Start_Sample(void) {
 void ADC_Acquire(void)
 {
     g_adc1_done = 0;
+    g_adc2_done = 0;
     g_adc3_done = 0;
     HAL_ADC_Stop_DMA(&hadc1);
+    HAL_ADC_Stop_DMA(&hadc2);
     HAL_ADC_Stop_DMA(&hadc3);
     HAL_TIM_Base_Start(&htim3);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC1_DMA_Buffer, LEN);
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)ADC2_DMA_Buffer, LEN);
     HAL_ADC_Start_DMA(&hadc3, (uint32_t*)ADC3_DMA_Buffer, LEN);
-    while (!g_adc1_done || !g_adc3_done) {}
+    while (!g_adc1_done || !g_adc2_done || !g_adc3_done) {}
 }
 
 void ADC2_Acquire(uint16_t *buf, uint32_t len)

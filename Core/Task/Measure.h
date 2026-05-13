@@ -6,6 +6,7 @@
 #define IIT6_OSCILLISCOPE_MEASURE_H
 
 #include "main.h"
+#include "circuit_debugger.h"
 
 #define FREQ_POINTS 480
 
@@ -38,6 +39,7 @@ void  Sweep_LF_Phase(float phases[27]);
 void  Phase_Expand(const float raw[27], float out[280], float *f_cutoff);
 void  Sweep_Cutoff_Gain(float gains[18], float *f_cutoff);
 float Measure_GainAtFreq(uint32_t freq_hz);
+void  Measure_All(CircuitState *st);
 
 typedef struct {
     float f_low;

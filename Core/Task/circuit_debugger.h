@@ -26,13 +26,16 @@ typedef enum {
 } FaultCode;
 
 typedef struct {
+    float     rms_ac_ch1;      // CH1 AC有效值@1kHz, ADC端原始V
+    float     rms_ac_ch2;      // CH2 AC有效值@1kHz, ADC端原始V
+    float     rms_dc_oc;       // 输出端直流有效值，空载
+    float     rms_dc_ld;       // 输出端直流有效值，带载
     float     r_in_dft;
     float     r_out_rms;
-    float     rms_dc_in;      // 输入端含直流有效值 (V)
-    float     rms_dc_out;     // 输出端含直流有效值 (V)
+    float     rms_dc_in;       // 输入端含直流有效值 (V)
     float     gain_1k;
-    float     gain_10k;
-    float     f_high;
+    float     f_low;           // -3dB下限截止频率
+    float     f_high;          // -3dB上限截止频率
     FaultCode fault_code;
     uint8_t   dc_only;
     uint8_t   valid;

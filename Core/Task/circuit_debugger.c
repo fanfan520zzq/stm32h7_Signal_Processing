@@ -8,6 +8,7 @@
 #include "ad9833_hal.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 CircuitState Circuit_Learn(void)
 {
@@ -15,76 +16,34 @@ CircuitState Circuit_Learn(void)
     memset(&st, 0, sizeof(st));
     st.valid = 1;
 
-    AD9833_SetFixedOutput(1000, WAVE_SINE);
-    AD9833_AmpSet(14);
+    /* 一次采集填满: rms_ac, r_in, gain_1k, rms_dc_oc/ld, r_out */
+    Measure_All(&st);
 
-    /* 输入电阻 (DFT法) */
-    st.r_in_dft = Measure_Input_Resistance_DFT();
+    /* 输入端含直流有效值 (复用Measure_All的捕获缓冲) */
     st.rms_dc_in = Compute_RMS_DC(CH1_Buffer, LEN);
 
-    /* 输出电阻 + 含直流有效值 */
-    {
-        ADC2_SetRate_10kHz();
-        uint16_t buf_out[2048];
-
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-        HAL_Delay(10);
-        ADC2_Acquire(buf_out, 2048);
-        float rms_oc_dc = Compute_RMS_DC(buf_out, 2048);
-        st.rms_dc_out = rms_oc_dc;
-
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-        HAL_Delay(10);
-        ADC2_Acquire(buf_out, 2048);
-        float rms_L_dc = Compute_RMS_DC(buf_out, 2048);
-
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-
-        float diff = fabsf(rms_oc_dc - rms_L_dc);
-        st.r_out_rms = (diff < 1e-6f) ? 0.0f : diff * 10000.0f / rms_L_dc;
-    }
-
-    /* 增益 */
-    st.gain_1k  = Measure_GainAtFreq(1000);
-    st.gain_10k = Measure_GainAtFreq(10000);
+    /* 扫频+对数插值 → -3dB上下限截止频率 */
+    FreqResponse_Fit();
+    st.f_low  = g_cutoff_fL;
+    st.f_high = g_cutoff_fH;
 
     /* 查表排错 */
+    printf("=== Circuit_Learn ===\r\n");
+    printf(" rms_ac_ch1 = %.4f V\r\n", st.rms_ac_ch1);
+    printf(" rms_ac_ch2 = %.4f V\r\n", st.rms_ac_ch2);
+    printf(" rms_dc_oc  = %.4f V\r\n", st.rms_dc_oc);
+    printf(" rms_dc_ld  = %.4f V\r\n", st.rms_dc_ld);
+    printf(" rms_dc_in  = %.4f V\r\n", st.rms_dc_in);
+    printf(" r_in_dft   = %.1f ohm\r\n", st.r_in_dft);
+    printf(" r_out_rms  = %.1f ohm\r\n", st.r_out_rms);
+    printf(" gain_1k    = %.3f\r\n", st.gain_1k);
+    printf(" f_low      = %.1f Hz\r\n", st.f_low);
+    printf(" f_high     = %.1f Hz\r\n", st.f_high);
+    printf(" valid      = %d\r\n", st.valid);
     Circuit_Diagnose(&st);
-
-    /* normal时进入扫频分析 */
-    if (st.fault_code == FAULT_NONE) {
-        float gains[20] = {0};
-        Sweep_20_Raw(gains);
-
-        const uint32_t freqs_20[20] = {
-            30,80,150,200,280,350,500,800,1000,3000,10000,
-            30000,50000,80000,120000,140000,160000,180000,200000,250000
-        };
-        int i_m=0; float max_g=0;
-        for(int i=0;i<20;i++){ float g=gains[i]; if(g>max_g){ max_g=g; i_m=i; } }
-        float th=max_g*0.707f;
-
-        float f_low=0, fH=0;
-        for(int i=1;i<20;i++){
-            if(gains[i] >= th){
-                float a=gains[i-1], b=gains[i];
-                f_low=(float)freqs_20[i-1]+(th-a)/(b-a)*((float)freqs_20[i]-(float)freqs_20[i-1]);
-                break;
-            }
-        }
-        for(int i=19;i>=1;i--){
-            if(gains[i-1] >= th){
-                float a=gains[i], b=gains[i-1];
-                fH=(float)freqs_20[i]+(th-a)/(b-a)*((float)freqs_20[i-1]-(float)freqs_20[i]);
-                break;
-            }
-        }
-
-        if (fH > 75000.0f && fH < 95000.0f)
-            st.fault_code = FAULT_C3_x2;
-        else if (fH >= 250000.0f || fH <=0 )
-            st.fault_code = FAULT_C3_OPEN;
-    }
+    printf(" fault_code = %d\r\n", (int)st.fault_code);
+    printf("====================\r\n");
+    HAL_Delay(3000);
 
     return st;
 }
@@ -97,8 +56,7 @@ void Circuit_Diagnose(CircuitState *st)
     float rin  = st->r_in_dft;
     float rout = st->r_out_rms;
     float g1k  = st->gain_1k;
-    float g10k = st->gain_10k;
-    float dc_out = st->rms_dc_out;
+    float dc_out = st->rms_dc_oc;
 
     st->fault_code = FAULT_NONE;
 
@@ -132,4 +90,10 @@ void Circuit_Diagnose(CircuitState *st)
         if (dc_out > 0.3f && dc_out < 1.2f)
                                      { st->fault_code = FAULT_R2_OPEN; return; }
     }
+
+    /* 5. 截止频率异常 (C3容值偏差/开路) */
+    if (st->f_high > 75000.0f && st->f_high < 95000.0f)
+        { st->fault_code = FAULT_C3_x2; return; }
+    if (st->f_high >= 250000.0f || st->f_high <= 0)
+        { st->fault_code = FAULT_C3_OPEN; return; }
 }

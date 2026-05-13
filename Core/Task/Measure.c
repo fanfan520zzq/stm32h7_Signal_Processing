@@ -135,7 +135,7 @@ float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)
         if (buf[idx] > v_max) v_max = buf[idx];
         if (buf[idx] < v_min) v_min = buf[idx];
     }
-    printf("Goertzel Debug: f_sig=%.0f, v_max=%d, v_min=%d, Vpp_RAW=%d\n", f_sig, v_max, v_min, v_max - v_min);
+    // printf("Goertzel Debug: f_sig=%.0f, v_max=%d, v_min=%d, Vpp_RAW=%d\n", f_sig, v_max, v_min, v_max - v_min);
 
     return 4.0f * mag / (float)N * ADC_TO_VOLT * 2.0f;
 }
@@ -332,7 +332,7 @@ float Measure_Output_Resistance_DFT(void)
     return diff * RS_OUT_OHM / rms_L;
 }
 
-/* ---- 单频点增益测试 (设频→双ADC采样→RMS→返回增益) ---- */
+/* ---- 单频点增益测试 (设频→三ADC同步采样→RMS→返回增益) ---- */
 float Measure_GainAtFreq(uint32_t freq_hz)
 {
     AD9833_SetFixedOutput(freq_hz, WAVE_SINE);
@@ -344,21 +344,63 @@ float Measure_GainAtFreq(uint32_t freq_hz)
         ADC1_SetRate_2400kHz(); ADC2_SetRate_2400kHz();
     }
 
-    uint16_t buf2[LEN];
-
-    ADC_Acquire();
+    ADC_Acquire();  // 三通道同步: ADC1→CH1, ADC2→ADC2_DMA, ADC3→CH2
     float rms1 = Compute_RMS(CH2_Buffer, LEN);
-    //float test_vpp1 = Measure_Vpp_Filtered(CH2_Buffer, LEN);
-    ADC2_Acquire(buf2, LEN);
-    float rms2 = Compute_RMS(buf2, LEN);
-    //float test_vpp2 = Measure_Vpp_Filtered(buf2, LEN);
-    for (int i = 0; i < LEN; i++) {
-        printf("%.3f,%.3f\n",
-               (float)(CH2_Buffer[i]) * (3.3f / 65535.0f),
-               (float)(buf2[i]) * (3.3f / 65535.0f));
-    }
+    float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
+
+    //for (int i = 0; i < LEN; i++) {
+    //    printf("%.3f,%.3f\n",
+    //           (float)(CH2_Buffer[i]) * (3.3f / 65535.0f),
+    //           (float)(ADC2_DMA_Buffer[i]) * (3.3f / 65535.0f));
+    //}
+
     if (rms1 < 1e-6f) return 0.0f;
     return rms2 * 125.0f / rms1;
+}
+
+/* ---- 一次同步采集: 输入电阻+增益+输出电阻, 填入CircuitState ---- */
+void Measure_All(CircuitState *st)
+{
+    AD9833_SetFixedOutput(1000, WAVE_SINE);
+    AD9833_AmpSet(14);
+    ADC1_SetRate_10kHz();
+    ADC2_SetRate_10kHz();
+
+    /* 一步同步: ADC1→CH1, ADC2→ADC2_DMA, ADC3→CH2 */
+    ADC_Acquire();
+
+    /* 输入电阻: Goertzel@1kHz on CH1/CH2 */
+    st->rms_ac_ch1 = Compute_RMS(CH1_Buffer, LEN);
+    st->rms_ac_ch2 = Compute_RMS(CH2_Buffer, LEN);
+
+    float rms1 = st->rms_ac_ch1 / 50.0f;
+    float rms2 = st->rms_ac_ch2 / 50.0f;
+    float diff_in = fabsf(rms1 - rms2);
+    st->r_in_dft = (diff_in < 1e-6f) ? 0.0f : rms2 * RS_IN_OHM / diff_in;
+
+    /* 增益@1kHz: 同次采集中CH2 vs ADC2 */
+    float rms_d = Compute_RMS(CH2_Buffer, LEN);
+    float rms_n = Compute_RMS(ADC2_DMA_Buffer, LEN);
+    st->gain_1k = (rms_d < 1e-6f) ? 0.0f : rms_n * 125.0f / rms_d;
+
+    /* 输出电阻: 继电器切换, 需单独ADC2采集 */
+    ADC2_SetRate_10kHz();
+    uint16_t buf[2048];
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_Delay(10);
+    ADC2_Acquire(buf, 2048);
+    st->rms_dc_oc = Compute_RMS_DC(buf, 2048);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+    HAL_Delay(10);
+    ADC2_Acquire(buf, 2048);
+    st->rms_dc_ld = Compute_RMS_DC(buf, 2048);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+    float diff_out = fabsf(st->rms_dc_oc - st->rms_dc_ld);
+    st->r_out_rms = (diff_out < 1e-6f) ? 0.0f : diff_out * RS_OUT_OHM / st->rms_dc_ld;
 }
 
 /* ===================================================================
@@ -384,7 +426,6 @@ void FreqResponse_Sweep(void)
         30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
     };
     float sweep_gain[SWEEP_POINTS];
-    uint16_t buf2[LEN];
 
     AD9833_AmpSet(12);
 
@@ -398,8 +439,7 @@ void FreqResponse_Sweep(void)
         ADC_Acquire();
         float rms1 = Compute_RMS(CH1_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -413,8 +453,7 @@ void FreqResponse_Sweep(void)
         ADC_Acquire();
         float rms1 = Compute_RMS(CH1_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -428,8 +467,7 @@ void FreqResponse_Sweep(void)
         ADC_Acquire();
         float rms1 = Compute_RMS(CH1_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -516,12 +554,11 @@ void FreqResponse_Sweep(void)
 }
 
 /* ===================================================================
- * 幅频拟合: 20点测量 + 双段最小二乘 + 模型重建480点
+ * 幅频响应: 20点同步扫频 + 对数域线性插值480点
  *
- * 低段拟合(6点,30~350Hz): Y=1/G² vs X=1/f² → f_L = √(k/b)
- * 高段拟合(6点,140k~250kHz): Y=1/G² vs X=f² → f_H = 1/√(b·k)
+ * 对数域插值: x=log10(f), y=gain → 480点全对数网格(10Hz~1.2MHz)
+ * f_L/f_H: 从插值曲线双向扫描-3dB截止频率
  * A_mid = gain@1kHz
- * 重建: |A(f)| = A_mid / √((1+(fL/f)²)(1+(f/fH)²))
  * =================================================================== */
 void FreqResponse_Fit(void)
 {
@@ -531,22 +568,20 @@ void FreqResponse_Fit(void)
         30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
     };
     float sweep_gain[SWEEP_POINTS];
-    uint16_t buf2[LEN];
 
-    AD9833_AmpSet(12);
+    AD9833_AmpSet(14);
 
     /* 阶段1: 10kHz (6点), k≥6 */
     ADC1_SetRate_10kHz();
     ADC2_SetRate_10kHz();
     for (int i = 0; i < STAGE1_N; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
 
+        AD9833_SetFixedOutput(f, WAVE_SINE);
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -555,13 +590,12 @@ void FreqResponse_Fit(void)
     ADC2_SetRate_100kHz();
     for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
+        AD9833_SetFixedOutput(f, WAVE_SINE);
 
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -570,19 +604,20 @@ void FreqResponse_Fit(void)
     ADC2_SetRate_2400kHz();
     for (int i = STAGE1_N + STAGE2_N; i < SWEEP_POINTS; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
+        AD9833_SetFixedOutput(f, WAVE_SINE);
 
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
 
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    ADC1_SetRate_10kHz();
-    ADC2_SetRate_10kHz();
-
+    ADC1_SetRate_100kHz();
+    ADC2_SetRate_100kHz();
+    // for (int i=0;i< 20;i++) {
+    //     printf("%.3f\n",sweep_gain[i]);
+    // }
 
     /* 低段最小二乘: Y=1/G² vs X=1/f² (6点, 30~350Hz) → f_L */
     #define LF_N 6
@@ -606,109 +641,62 @@ void FreqResponse_Fit(void)
     /* A_mid = gain@1kHz */
     g_mid_gain = sweep_gain[8];
 
-    /* 线性插值20点→480点, 从中扫描-3dB截止频率 */
-    int idx = 0;
-    float step1 = (1000.0f - 10.0f) / 199.0f;
-    for (int i = 0; i < 200; i++) {
-        float fi = 10.0f + (float)i * step1;
-        g_freq_list[idx] = (uint32_t)fi;
-        if (fi <= (float)sweep_freqs[0]) g_gain_response[idx] = sweep_gain[0];
-        else if (fi >= (float)sweep_freqs[SWEEP_POINTS-1]) g_gain_response[idx] = sweep_gain[SWEEP_POINTS-1];
-        else for (int j = 0; j < SWEEP_POINTS-1; j++) {
-            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
-                float t = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
-                g_gain_response[idx] = sweep_gain[j] + t * (sweep_gain[j+1] - sweep_gain[j]);
-                break;
+    /* 对数域插值: 20点→480点对数均匀网格 */
+    float x_node[SWEEP_POINTS];
+    for (int i = 0; i < SWEEP_POINTS; i++)
+        x_node[i] = log10f((float)sweep_freqs[i]);
+
+    float freq_min = 10.0f;
+    float freq_max = 1200000.0f;
+    float log_ratio = freq_max / freq_min;
+    float exp_step = powf(log_ratio, 1.0f / (float)(FREQ_POINTS - 1));
+
+    for (int i = 0; i < FREQ_POINTS; i++) {
+        float fi = freq_min * powf(exp_step, (float)i);
+        g_freq_list[i] = (uint32_t)fi;
+        float xi = log10f(fi);
+
+        if (xi <= x_node[0]) {
+            g_gain_response[i] = sweep_gain[0];
+        } else if (xi >= x_node[SWEEP_POINTS - 1]) {
+            g_gain_response[i] = sweep_gain[SWEEP_POINTS - 1];
+        } else {
+            for (int j = 0; j < SWEEP_POINTS - 1; j++) {
+                if (xi >= x_node[j] && xi <= x_node[j + 1]) {
+                    float t = (xi - x_node[j]) / (x_node[j + 1] - x_node[j]);
+                    g_gain_response[i] = sweep_gain[j] + t * (sweep_gain[j + 1] - sweep_gain[j]);
+                    break;
+                }
             }
         }
-        idx++;
-    }
-    for (int t = 0; t < 4; t++) {
-        float fi = 1000.0f + t * 1000.0f;
-        g_freq_list[idx] = (uint32_t)fi;
-        for (int j = 0; j < SWEEP_POINTS-1; j++) {
-            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
-                float r = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
-                g_gain_response[idx] = sweep_gain[j] + r * (sweep_gain[j+1] - sweep_gain[j]);
-                break;
-            }
-        }
-        idx++;
-    }
-    for (int i = 0; i < 76; i++) {
-        float fi = 5000.0f + i * 1000.0f;
-        g_freq_list[idx] = (uint32_t)fi;
-        for (int j = 0; j < SWEEP_POINTS-1; j++) {
-            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
-                float r = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
-                g_gain_response[idx] = sweep_gain[j] + r * (sweep_gain[j+1] - sweep_gain[j]);
-                break;
-            }
-        }
-        idx++;
-    }
-    float step3 = (1200000.0f - 80000.0f) / 199.0f;
-    for (int i = 0; i < 200; i++) {
-        float fi = 80000.0f + (float)i * step3;
-        g_freq_list[idx] = (uint32_t)fi;
-        if (fi <= (float)sweep_freqs[0]) g_gain_response[idx] = sweep_gain[0];
-        else if (fi >= (float)sweep_freqs[SWEEP_POINTS-1]) g_gain_response[idx] = sweep_gain[SWEEP_POINTS-1];
-        else for (int j = 0; j < SWEEP_POINTS-1; j++) {
-            if (fi >= (float)sweep_freqs[j] && fi <= (float)sweep_freqs[j+1]) {
-                float t = (fi - (float)sweep_freqs[j]) / (float)(sweep_freqs[j+1] - sweep_freqs[j]);
-                g_gain_response[idx] = sweep_gain[j] + t * (sweep_gain[j+1] - sweep_gain[j]);
-                break;
-            }
-        }
-        idx++;
     }
 
-    /* 上限截止频率: 从后往前找第一个≥0.707×max_gain的频点 */
+    /* 查找max_gain, 计算-3dB阈值 */
     float max_g = 0;
     for (int i = 0; i < FREQ_POINTS; i++)
         if (g_gain_response[i] > max_g) max_g = g_gain_response[i];
     float thresh = max_g * 0.707f;
+
+    /* 从对数插值曲线扫描fL (-3dB低频截止, 从左向右) */
+    g_cutoff_fL = (float)g_freq_list[0];
+    for (int i = 0; i < FREQ_POINTS; i++) {
+        if (g_gain_response[i] > thresh) {
+            if (i == 0) g_cutoff_fL = (float)g_freq_list[0];
+            else {
+                float a = g_gain_response[i-1], b = g_gain_response[i];
+                g_cutoff_fL = (float)g_freq_list[i-1] + (thresh - a) / (b - a) * (float)(g_freq_list[i] - g_freq_list[i-1]);
+            }
+            break;
+        }
+    }
+
+    /* 从对数插值曲线扫描fH (-3dB高频截止, 从右向左) */
     g_cutoff_fH = 0;
     for (int i = FREQ_POINTS - 1; i >= 0; i--) {
         if (g_gain_response[i] > thresh) {
             g_cutoff_fH = (float)g_freq_list[i];
             break;
         }
-    }
-
-    /* 双极点模型重建覆盖插值曲线(光滑) */
-    float fL2 = g_cutoff_fL * g_cutoff_fL;
-    float fH2 = g_cutoff_fH * g_cutoff_fH;
-    idx = 0;
-    step1 = (1000.0f - 10.0f) / 199.0f;
-    for (int i = 0; i < 200; i++) {
-        float f = 10.0f + (float)i * step1;
-        float f2 = f * f;
-        g_freq_list[idx]     = (uint32_t)f;
-        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
-        idx++;
-    }
-    for (int t = 0; t < 4; t++) {
-        float f = 1000.0f + t * 1000.0f;
-        float f2 = f * f;
-        g_freq_list[idx]     = (uint32_t)f;
-        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
-        idx++;
-    }
-    for (int i = 0; i < 76; i++) {
-        float f = 5000.0f + i * 1000.0f;
-        float f2 = f * f;
-        g_freq_list[idx]     = (uint32_t)f;
-        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
-        idx++;
-    }
-    step3 = (1200000.0f - 80000.0f) / 199.0f;
-    for (int i = 0; i < 200; i++) {
-        float f = 80000.0f + (float)i * step3;
-        float f2 = f * f;
-        g_freq_list[idx]     = (uint32_t)f;
-        g_gain_response[idx] = g_mid_gain / sqrtf((1.0f + fL2/f2) * (1.0f + f2/fH2));
-        idx++;
     }
 }
 
@@ -722,7 +710,6 @@ void Sweep_20_Raw(float gains[20])
         500, 800, 1000, 3000, 10000,
         30000, 50000, 80000, 120000, 140000, 160000, 180000, 200000, 250000
     };
-    uint16_t buf2[LEN];
 
     AD9833_AmpSet(12);
 
@@ -731,37 +718,35 @@ void Sweep_20_Raw(float gains[20])
     ADC2_SetRate_10kHz();
     for (int i = 0; i < STAGE1_N; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
+
+        AD9833_SetFixedOutput(f, WAVE_SINE);
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         gains[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    /* 阶段2: 100kHz (5点), Hann窗 */
+    /* 阶段2: 100kHz (5点) */
     ADC1_SetRate_100kHz();
     ADC2_SetRate_100kHz();
     for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
+        AD9833_SetFixedOutput(f, WAVE_SINE);
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         gains[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    /* 阶段3: 2.4MHz (9点), Hann窗Goertzel, k≥8.5 */
+    /* 阶段3: 2.4MHz (9点)，k≥8.5 */
     ADC1_SetRate_2400kHz();
     ADC2_SetRate_2400kHz();
     for (int i = STAGE1_N + STAGE2_N; i < SWEEP_POINTS; i++) {
         uint32_t f = sweep_freqs[i];
-        AD9833_SetFrequency(FREQ_REG_0, f);
+        AD9833_SetFixedOutput(f, WAVE_SINE);
         ADC_Acquire();
-        float rms1 = Compute_RMS(CH1_Buffer, LEN);
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms1 = Compute_RMS(CH2_Buffer, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         gains[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
@@ -781,7 +766,7 @@ void Sweep_LF_Raw(float gains[43])
 
     /* 分母一次 (ADC1全LEN点) */
     ADC_Acquire();
-    float rms_denom = Compute_RMS(CH1_Buffer, LEN) / 25.0f;
+    float rms_denom = Compute_RMS(CH2_Buffer, LEN) / 25.0f;
 
     uint16_t buf[256];
     int idx = 0;
@@ -862,15 +847,12 @@ void Sweep_Cutoff_Gain(float gains[18], float *f_cutoff)
     ADC1_SetRate_10kHz();
     ADC2_SetRate_10kHz();
 
-    uint16_t buf2[LEN];
-
     for (int i = 0; i < 18; i++) {
         uint32_t f = freqs[i];
         AD9833_SetFrequency(FREQ_REG_0, f);
         ADC_Acquire();
         float rms1 = Compute_RMS(CH1_Buffer, LEN);
-        ADC2_Acquire(buf2, LEN);
-        float rms2 = Compute_RMS(buf2, LEN);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
         gains[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
