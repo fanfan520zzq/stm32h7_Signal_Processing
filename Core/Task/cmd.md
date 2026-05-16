@@ -21,30 +21,36 @@ reason: r1open r1short,r2...,r3...,r4...(same to r1)
         c1open c1*2,c2...,c3...(same to c1)
 
 
-## 故障查表决策规则
+## 故障查表决策规则 重构！！！！
 
 优先级从上到下，首个命中即返回。
 
-| 条件 | 故障码 |
-|---|---|---|
-| `rin > 100k` | **c1open** |
-| `dc_out > 2.15` → `9k < rin < 12k` → `g1k < 1` | **r4open** |
-| `dc_out > 2.15` → `12k < rin < 15.5k` | **r1open** |
-| `dc_out > 2.15` → `rout < 30` → `rin > 2k` | **r3short** |
-| `dc_out > 2.15` → `rin < 30` → `rout < 5` | **r1short** |
-| `dc_out > 2.15` → `800 < rout < 1000` | **r2short** |
-| `9k < rin < 15k` → `g1k > 1` | **c2open** |
-| `rin < 300` → `dc_out < 0.02` | **r4short** |
-| `rin < 300` → `dc_out < 0.3` | **r3open** |
-| `rin < 300` → `0.3 < dc_out < 1.2` | **r2open** |
-| 查表不命中 → 扫频: `75k < f_high < 95k` | **c3open** |
-| 查表不命中 → 扫频: `f_high ≥ 250k` | **c3x2** |
-| 以上都不匹配 | **normal** |
+r_in > 500000 ----c1_open
+gain (1.75-2.25) ----c2_open
 
-### 符号
-- `rin` = r_in_dft (Ω), `rout` = r_out_rms (Ω)
-- `g1k` = gain_1k, `g10k` = gain_10k
-- `dc_out` = rms_dc_out (V)
+dc_oc >2.2 : {
+        dc_rl (1.95,2.1):{
+                r_in>14000 ---- r1_open
+                r_in<180 ---- r2_short
+                r4_open (9000,14000) ---- r4_open
+        }
+        dc_rl > 2.15 :{
+                gain (12,100) ---- r1_short
+                gain<12 ---- r3_short
+        }
+}
+
+ac_ch2 < 0.05 :{
+        dc_oc <0.010 ---- r4_short
+        dc_oc (0.03,0.08) ---- r3_open 
+        dc_oc (0.8,0.9) ---- r2_open
+}
+
+若为normal: {
+        FH > 1MHZ ---- c3_open
+        FL <200HZ ---- c2*2
+        FH (75K , 100KHZ) ---- c3*2
+}
 
 ### LCD输出
 ```

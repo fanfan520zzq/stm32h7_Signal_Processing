@@ -150,30 +150,9 @@ int main(void)
   AD9833_Init();
 
 
-  AD9833_SetFixedOutput(1000, WAVE_SINE);
+  AD9833_SetFixedOutput(5, WAVE_SINE);
   AD9833_AmpSet(14);
-  // CircuitState state ;
-  // extern uint16_t CH1_Buffer[];
-  // static float main_ch1_norm[4096];
-  // uint16_t d1_dump, d2_dump;
-  // ADC1_Measure_Sync(&d1_dump, &d2_dump);
-  //
-  // float sum = 0.0f;
-  // for (int i = 0; i < 4096; i++) {
-  //   main_ch1_norm[i] = (float)CH1_Buffer[i] * (3.3f / 65535.0f);
-  //   sum += main_ch1_norm[i];
-  // }
-  // float mean = sum / 4096.0f;
-  //
-  // float sum_sq = 0.0f;
-  // for (int i = 0; i < 4096; i++) {
-  //   float ac = main_ch1_norm[i] - mean;
-  //   sum_sq += ac * ac;
-  // }
-  // float main_ch1_rms = sqrtf(sum_sq / 4096.0f);
-  //
-  // // You can set a breakpoint on the following line to observe main_ch1_norm and main_ch1_rms
-  // __NOP();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -187,9 +166,10 @@ int main(void)
     // HAL_Delay(500);
     // float gain_10k = Measure_GainAtFreq(10000);
 
-    // FreqResponse_Fit();
+      //FreqResponse_Fit();
 
-    Circuit_Learn();
+     //
+     // Circuit_Learn();
 
 
       // for (int i=0;i< FREQ_POINTS;i++) {
@@ -200,9 +180,13 @@ int main(void)
 
 
       //在做测试，保留注释
-      // UART_Poll();
-      // CMD_Poll();
-      // CMD_Periodic_Tick();
+      // float gain5 = Measure_Gain_LF(10) *10000;
+      // printf("20Hz gain = %.1f\r\n", gain5);
+      // HAL_Delay(200);
+
+      UART_Poll();
+      CMD_Poll();
+      CMD_Periodic_Tick();
       // ADC_Poll();
       // FFT_Poll();
 

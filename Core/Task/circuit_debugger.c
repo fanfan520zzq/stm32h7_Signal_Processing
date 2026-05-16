@@ -16,84 +16,95 @@ CircuitState Circuit_Learn(void)
     memset(&st, 0, sizeof(st));
     st.valid = 1;
 
-    /* 一次采集填满: rms_ac, r_in, gain_1k, rms_dc_oc/ld, r_out */
+    /* Step 1: 1kHz一键测量 */
     Measure_All(&st);
+    st.rms_dc_in = Compute_RMS_DC(CH2_Buffer, 100);
 
-    /* 输入端含直流有效值 (复用Measure_All的捕获缓冲) */
-    st.rms_dc_in = Compute_RMS_DC(CH1_Buffer, LEN);
-
-    /* 扫频+对数插值 → -3dB上下限截止频率 */
-    FreqResponse_Fit();
-    st.f_low  = g_cutoff_fL;
-    st.f_high = g_cutoff_fH;
-
-    /* 查表排错 */
-    printf("=== Circuit_Learn ===\r\n");
-    printf(" rms_ac_ch1 = %.4f V\r\n", st.rms_ac_ch1);
-    printf(" rms_ac_ch2 = %.4f V\r\n", st.rms_ac_ch2);
-    printf(" rms_dc_oc  = %.4f V\r\n", st.rms_dc_oc);
-    printf(" rms_dc_ld  = %.4f V\r\n", st.rms_dc_ld);
-    printf(" rms_dc_in  = %.4f V\r\n", st.rms_dc_in);
-    printf(" r_in_dft   = %.1f ohm\r\n", st.r_in_dft);
-    printf(" r_out_rms  = %.1f ohm\r\n", st.r_out_rms);
-    printf(" gain_1k    = %.3f\r\n", st.gain_1k);
-    printf(" f_low      = %.1f Hz\r\n", st.f_low);
-    printf(" f_high     = %.1f Hz\r\n", st.f_high);
-    printf(" valid      = %d\r\n", st.valid);
+    /* Step 2: 1kHz查表排错 (cmd.md规则1~4) */
     Circuit_Diagnose(&st);
-    printf(" fault_code = %d\r\n", (int)st.fault_code);
-    printf("====================\r\n");
-    HAL_Delay(3000);
 
+    /* Step 3: 若normal则扫频 + 扫频诊断 (cmd.md规则SW1~SW3) */
+    if (st.fault_code == FAULT_NONE) {
+        FreqResponse_Fit();
+        st.f_low  = g_cutoff_fL;
+        st.f_high = g_cutoff_fH;
+        Circuit_Diagnose_Sweep(&st);
+    }
+
+    // /* debug */
+    // printf("=== Circuit_Learn ===\r\n");
+    // printf(" rms_ac_ch1 = %.4f V\r\n", st.rms_ac_ch1);
+    // printf(" rms_ac_ch2 = %.4f V\r\n", st.rms_ac_ch2);
+    // printf(" rms_dc_oc  = %.4f V\r\n", st.rms_dc_oc);
+    // printf(" rms_dc_ld  = %.4f V\r\n", st.rms_dc_ld);
+    // printf(" rms_dc_in  = %.4f V\r\n", st.rms_dc_in);
+    // printf(" r_in_dft   = %.1f ohm\r\n", st.r_in_dft);
+    // printf(" r_out_rms  = %.1f ohm\r\n", st.r_out_rms);
+    // printf(" gain_1k    = %.3f\r\n", st.gain_1k);
+    // printf(" f_low      = %.1f Hz\r\n", st.f_low);
+    // printf(" f_high     = %.1f Hz\r\n", st.f_high);
+    // printf(" valid      = %d\r\n", st.valid);
+    // static const char *names[] = {"NONE","C1_OPEN","R1_OPEN","R2_OPEN","R3_OPEN","R4_OPEN",
+    //     "C2_OPEN","R1_SHORT","R2_SHORT","R3_SHORT","R4_SHORT","C3_OPEN","C3_x2","C2_x2","DC_ONLY"};
+    // printf(" fault_code = %s\r\n", names[st.fault_code]);
+    // printf("====================\r\n");
+    HAL_Delay(200);
     return st;
 }
 
 /* ===================================================================
- * 查表排错 (决策.txt规则, 优先级从上到下, 首个命中即返回)
+ * 查表排错 (cmd.md规则, 优先级从上到下, 首个命中即返回)
  * =================================================================== */
 void Circuit_Diagnose(CircuitState *st)
 {
-    float rin  = st->r_in_dft;
-    float rout = st->r_out_rms;
-    float g1k  = st->gain_1k;
-    float dc_out = st->rms_dc_oc;
+    float rin    = st->r_in_dft;
+    float g1k    = st->gain_1k ;
+    float dc_oc  = st->rms_dc_oc;
+    float dc_ld  = st->rms_dc_ld;
+    float ac_ch2 = st->rms_ac_ch2;
 
     st->fault_code = FAULT_NONE;
 
-    /* 1. r_in > 100k → c1open */
-    if (rin > 100000.0f) { st->fault_code = FAULT_C1_OPEN; return; }
+    /* 1. r_in > 500k → c1_open */
+    if (rin > 500000.0f) { st->fault_code = FAULT_C1_OPEN; return; }
 
-    /* 2. dc_out > 2.15V (高优先级) */
-    if (dc_out > 2.15f) {
-        if (rin > 9000.0f && rin < 12000.0f) {
-            if (g1k < 1.0f)     { st->fault_code = FAULT_R4_OPEN; return; }
+    /* 2. gain in (1.75, 2.25) → c2_open */
+    if (g1k > 1.90f && g1k < 2.30f) { st->fault_code = FAULT_C2_OPEN; return; }
+
+    /* 3. dc_oc > 2.2 */
+    if (dc_oc > 2.2f) {
+        if (dc_ld > 1.95f && dc_ld < 2.1f) {
+            if (rin > 14000.0f)                     { st->fault_code = FAULT_R1_OPEN;  return; }
+            if (rin < 680.0f)                       { st->fault_code = FAULT_R2_SHORT; return; }
+            if (rin > 9000.0f && rin < 14000.0f)    { st->fault_code = FAULT_R4_OPEN;  return; }
         }
-        if (rin > 12000.0f && rin < 15500.0f)
-                                { st->fault_code = FAULT_R1_OPEN; return; }
-        if (rout < 30.0f && rin > 2000.0f)
-                                { st->fault_code = FAULT_R3_SHORT; return; }
-        if (rin < 30.0f && rout < 5.0f)
-                                { st->fault_code = FAULT_R1_SHORT; return; }
-        if (rout > 800.0f && rout < 1000.0f)
-                                { st->fault_code = FAULT_R2_SHORT; return; }
-
+        if (dc_ld > 2.00f) {
+            if (g1k > 12.0f && g1k < 100.0f)          { st->fault_code = FAULT_R1_SHORT; return; }
+            if (g1k < 12.0f)                          { st->fault_code = FAULT_R3_SHORT; return; }
+        }
     }
 
-    /* 3. r_in in (9k, 15k), g1k > 1 → c2open */
-    if (rin > 9000.0f && rin < 15000.0f && g1k > 1.0f)
-        { st->fault_code = FAULT_C2_OPEN; return; }
-
-    /* 4. r_in < 300, 看dc_out */
-    if (rin < 1600.0f) {
-        if (dc_out<0.02){ st->fault_code = FAULT_R4_SHORT; return; }
-        if (dc_out < 0.3f)          { st->fault_code = FAULT_R3_OPEN; return; }
-        if (dc_out > 0.3f && dc_out < 1.2f)
-                                     { st->fault_code = FAULT_R2_OPEN; return; }
+    /* 4. ac_ch2 < 0.05 */
+    if (ac_ch2 < 0.05f) {
+        if (dc_oc < 0.010f)                         { st->fault_code = FAULT_R4_SHORT; return; }
+        if (dc_oc > 0.03f && dc_oc < 0.08f)         { st->fault_code = FAULT_R3_OPEN;  return; }
+        if (dc_oc > 0.8f  && dc_oc < 0.9f)          { st->fault_code = FAULT_R2_OPEN;  return; }
     }
+}
 
-    /* 5. 截止频率异常 (C3容值偏差/开路) */
-    if (st->f_high > 75000.0f && st->f_high < 95000.0f)
-        { st->fault_code = FAULT_C3_x2; return; }
-    if (st->f_high >= 250000.0f || st->f_high <= 0)
-        { st->fault_code = FAULT_C3_OPEN; return; }
+/* ===================================================================
+ * 扫频查表排错 (cmd.md规则SW1~SW3, 仅Circuit_Learn内normal时调用)
+ * =================================================================== */
+void Circuit_Diagnose_Sweep(CircuitState *st)
+{
+    /* SW1. FH > 1MHz → c3_open */
+    if (st->f_high > 1000000.0f) { st->fault_code = FAULT_C3_OPEN; return; }
+    /* SW2. FL < 250Hz → c2*2 */
+    if (st->f_low < 250.0f && st->f_low > 0) { st->fault_code = FAULT_C2_x2; return; }
+    /* SW3. FH ∈ (75k, 100k) → c3*2 */
+    if (st->f_high > 75000.0f && st->f_high < 100000.0f) { st->fault_code = FAULT_C3_x2; return; }
+    /* SW4. 10Hz增益×10000: 6600~7050 → c1*2, 7050~8000→normal */
+    float g10 = Measure_Gain_LF(10);
+    uint32_t v = (uint32_t)(g10 * 10000.0f);
+    if (v >= 6600 && v < 7050) { st->fault_code = FAULT_C1_x2; return; }
 }

@@ -21,6 +21,7 @@ extern uint16_t ADC2_DMA_Buffer[LEN];
 extern uint16_t ADC3_DMA_Buffer[LEN];
 
 void ADC_Acquire(void);
+void ADC_Acquire_N(uint32_t n);
 void ADC_Start_DMA(void);
 void Start_Sample(void);
 

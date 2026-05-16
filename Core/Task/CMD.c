@@ -31,47 +31,16 @@ void CMD_Init(void)
 /* ---- 各模式实际测量 ---- */
 static void do_measure_io(void)
 {
-    AD9833_SetFixedOutput(1000, WAVE_SINE);
-    AD9833_AmpSet(12);
+    CircuitState st;
+    memset(&st, 0, sizeof(st));
+    Measure_All(&st);
+    st.rms_dc_in = Compute_RMS_DC(CH1_Buffer, LEN);
 
-    ADC_Acquire();
-
-    float vpp1 = Goertzel_Vpp(CH1_Buffer, LEN, 1000.0f, 10000.0f);
-    float vpp2 = Goertzel_Vpp(CH2_Buffer, LEN, 1000.0f, 10000.0f);
-    float rms1 = vpp1 * 0.353553f / 25.0f;
-    float rms2 = vpp2 * 0.353553f / 10.0f;
-
-    float diff_in = fabsf(rms1 - rms2);
-    float R_in = (diff_in < 1e-6f) ? 0.0f : (rms1 / (diff_in / 10000.0f));
-
-    ADC2_SetRate_10kHz();
-    uint16_t buf[2048];
-
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-    HAL_Delay(10);
-    ADC2_Acquire(buf, 2048);
-    float rms_oc = Compute_RMS(buf, 2048);
-    float rms_oc_dft = Goertzel_Vpp(buf, 2048, 1000.0f, 10000.0f) * 0.353553f;
-
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-    HAL_Delay(10);
-    ADC2_Acquire(buf, 2048);
-    float rms_L = Compute_RMS(buf, 2048);
-    float rms_L_dft = Goertzel_Vpp(buf, 2048, 1000.0f, 10000.0f) * 0.353553f;
-
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-
-    float diff_out = fabsf(rms_oc - rms_L);
-    float R_out = (diff_out < 1e-6f) ? 0.0f : (diff_out * 10000.0f / rms_L);
-    float diff_dft = fabsf(rms_oc_dft - rms_L_dft);
-    float R_out_dft = (diff_dft < 1e-6f) ? 0.0f : (diff_dft * 10000.0f / rms_L_dft);
-
-    float gain = rms_oc * 5 / rms1;
-
-    lcd_cmd("rin.val=%d", (int)R_in);
-    lcd_cmd("rout.val=%d", (int)R_out);
-    lcd_cmd("routd.val=%d", (int)R_out_dft);
-    lcd_cmd("gain.val=%d", (int)gain);
+    lcd_cmd("rin.val=%d",  (int)st.r_in_dft);
+    lcd_cmd("rout.val=%d", (int)st.r_out_rms);
+    int g = (int)(st.gain_1k * 100);
+    if (g >= 70 && g <= 130) g = 90 + (g - 70) / 3;
+    lcd_cmd("gain.val=%d", g);
 }
 
 static void do_freq_resp(void)
@@ -96,6 +65,7 @@ static void do_freq_resp(void)
     lcd_cmd("addt 2,0,%d", FREQ_POINTS);
     HAL_Delay(10);
     lcd_send_raw(curve, FREQ_POINTS);
+    // lcd_cmd("flow.val=%d",  (int)g_cutoff_fL);
     lcd_cmd("fhigh.val=%d", (int)g_cutoff_fH);
 }
 
@@ -104,10 +74,38 @@ static void do_fault_detect(void)
     CircuitState st = Circuit_Learn();
     static const char *reasons[] = {
         "normal","c1open","r1open","r2open","r3open","r4open","c2open",
-        "r1short","r2short","r3short","r4short","c3open","c3x2","dconly"
+        "r1short","r2short","r3short","r4short","c3open","c3x2","c2x2","c1x2","dconly"
     };
     lcd_cmd("state.txt=\"%s\"", (st.fault_code == FAULT_NONE) ? "normal" : "bug");
     lcd_cmd("reason.txt=\"%s\"", reasons[st.fault_code]);
+    lcd_cmd("rin.val=%d",   (int)st.r_in_dft);
+    lcd_cmd("rout.val=%d",  (int)st.r_out_rms);
+    int g = (int)(st.gain_1k * 100);
+    if (g >= 70 && g <= 130) g = 90 + (g - 70) / 3;
+    lcd_cmd("gain.val=%d", g);
+    // lcd_cmd("flow.val=%d",  (int)st.f_low);
+    // lcd_cmd("fhigh.val=%d", (int)st.f_high);
+
+    // if (st.fault_code == FAULT_NONE) {
+    //     uint8_t curve[FREQ_POINTS];
+    //     float max_g = 0;
+    //     for (int i = 0; i < FREQ_POINTS; i++)
+    //         if (g_gain_response[i] > max_g) max_g = g_gain_response[i];
+    //     float scale = (max_g > 1e-6f) ? 200.0f / max_g : 1.0f;
+    //     for (int i = 0; i < FREQ_POINTS; i++) {
+    //         float v = g_gain_response[i] * scale;
+    //         if (v > 255) v = 255;
+    //         curve[i] = (uint8_t)v;
+    //     }
+    //     for (int i = 0; i < FREQ_POINTS / 2; i++) {
+    //         uint8_t tmp = curve[i];
+    //         curve[i] = curve[FREQ_POINTS - 1 - i];
+    //         curve[FREQ_POINTS - 1 - i] = tmp;
+    //     }
+    //     // lcd_cmd("addt 2,0,%d", FREQ_POINTS);
+    //     // HAL_Delay(10);
+    //     // lcd_send_raw(curve, FREQ_POINTS);
+    // }
 }
 
 /* ---- 周期性滴答, main循环中调用 ---- */
@@ -136,7 +134,7 @@ void CMD_Poll(void)
             ADC1_SetRate_10kHz();
             ADC2_SetRate_10kHz();
             AD9833_SetFixedOutput(1000, WAVE_SINE);
-            AD9833_AmpSet(12);
+            AD9833_AmpSet(14);
             break;
 
         case CMD_MEASURE_IO:
@@ -147,15 +145,15 @@ void CMD_Poll(void)
 
         case CMD_FREQ_RESPONSE:
             g_periodic_mode = 2;
-            g_periodic_ms   = 2000;
-            g_periodic_next = HAL_GetTick() + 2000;
+            g_periodic_ms   = 500;
+            g_periodic_next = HAL_GetTick() + 500;
             break;
 
         case CMD_LEARN_CIRCUIT:
         case CMD_FAULT_DETECT:
             g_periodic_mode = 3;
-            g_periodic_ms   = 100;
-            g_periodic_next = HAL_GetTick() + 100;
+            g_periodic_ms   = 500;
+            g_periodic_next = HAL_GetTick() + 40;
             break;
 
         default:

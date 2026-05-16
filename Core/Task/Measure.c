@@ -361,17 +361,18 @@ float Measure_GainAtFreq(uint32_t freq_hz)
 /* ---- 一次同步采集: 输入电阻+增益+输出电阻, 填入CircuitState ---- */
 void Measure_All(CircuitState *st)
 {
+#define ALL_N 100
     AD9833_SetFixedOutput(1000, WAVE_SINE);
     AD9833_AmpSet(14);
     ADC1_SetRate_10kHz();
     ADC2_SetRate_10kHz();
 
     /* 一步同步: ADC1→CH1, ADC2→ADC2_DMA, ADC3→CH2 */
-    ADC_Acquire();
+    ADC_Acquire_N(ALL_N);
 
-    /* 输入电阻: Goertzel@1kHz on CH1/CH2 */
-    st->rms_ac_ch1 = Compute_RMS(CH1_Buffer, LEN);
-    st->rms_ac_ch2 = Compute_RMS(CH2_Buffer, LEN);
+    /* 输入电阻: RMS on CH1/CH2 */
+    st->rms_ac_ch1 = Compute_RMS(CH1_Buffer, ALL_N);
+    st->rms_ac_ch2 = Compute_RMS(CH2_Buffer, ALL_N);
 
     float rms1 = st->rms_ac_ch1 / 50.0f;
     float rms2 = st->rms_ac_ch2 / 50.0f;
@@ -379,28 +380,50 @@ void Measure_All(CircuitState *st)
     st->r_in_dft = (diff_in < 1e-6f) ? 0.0f : rms2 * RS_IN_OHM / diff_in;
 
     /* 增益@1kHz: 同次采集中CH2 vs ADC2 */
-    float rms_d = Compute_RMS(CH2_Buffer, LEN);
-    float rms_n = Compute_RMS(ADC2_DMA_Buffer, LEN);
+    float rms_d = Goertzel_Vpp(CH2_Buffer, ALL_N, 1000.0f, 10000.0f);
+    //float rms_d = Compute_RMS(CH2_Buffer, ALL_N);
+    float rms_n = Goertzel_Vpp(ADC2_DMA_Buffer, ALL_N, 1000.0f, 10000.0f);
+    // float rms_n = Compute_RMS(ADC2_DMA_Buffer, ALL_N);
     st->gain_1k = (rms_d < 1e-6f) ? 0.0f : rms_n * 125.0f / rms_d;
+    if (st->r_in_dft < 1.0f) st->gain_1k = 1.0f;
 
     /* 输出电阻: 继电器切换, 需单独ADC2采集 */
     ADC2_SetRate_10kHz();
-    uint16_t buf[2048];
+    uint16_t buf[ALL_N];
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
     HAL_Delay(10);
-    ADC2_Acquire(buf, 2048);
-    st->rms_dc_oc = Compute_RMS_DC(buf, 2048);
+    ADC2_Acquire(buf, ALL_N);
+    st->rms_dc_oc = Compute_RMS_DC(buf, ALL_N);
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
     HAL_Delay(10);
-    ADC2_Acquire(buf, 2048);
-    st->rms_dc_ld = Compute_RMS_DC(buf, 2048);
+    ADC2_Acquire(buf, ALL_N);
+    st->rms_dc_ld = Compute_RMS_DC(buf, ALL_N);
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
 
     float diff_out = fabsf(st->rms_dc_oc - st->rms_dc_ld);
     st->r_out_rms = (diff_out < 1e-6f) ? 0.0f : diff_out * RS_OUT_OHM / st->rms_dc_ld;
+#undef ALL_N
+}
+
+/* ---- 低频增益: RMS比, N=fs/f, 下界100, 上界LEN ---- */
+float Measure_Gain_LF(uint32_t freq_hz)
+{
+    if (freq_hz < 1 || freq_hz > 100) return 0.0f;
+    uint32_t N = (uint32_t)(10000.0f / (float)freq_hz);
+    if (N < 100) N = 100;
+    if (N > LEN) N = LEN;
+
+    AD9833_SetFixedOutput(freq_hz, WAVE_SINE);
+    AD9833_AmpSet(14);
+    ADC1_SetRate_10kHz();
+    ADC_Acquire_N(N);
+
+    float rms1 = Compute_RMS(CH1_Buffer, N);
+    float rms2 = Compute_RMS(CH2_Buffer, N);
+    return (rms1 < 1e-6f) ? 0.0f : rms2 / rms1;
 }
 
 /* ===================================================================
@@ -554,11 +577,11 @@ void FreqResponse_Sweep(void)
 }
 
 /* ===================================================================
- * 幅频响应: 20点同步扫频 + 对数域线性插值480点
+ * 幅频响应: 20点同步扫频(自适应N) + 对数域线性插值480点
  *
+ * 每频点采3周期, N=3×fs/f, 下界100, 上界LEN
  * 对数域插值: x=log10(f), y=gain → 480点全对数网格(10Hz~1.2MHz)
  * f_L/f_H: 从插值曲线双向扫描-3dB截止频率
- * A_mid = gain@1kHz
  * =================================================================== */
 void FreqResponse_Fit(void)
 {
@@ -571,74 +594,51 @@ void FreqResponse_Fit(void)
 
     AD9833_AmpSet(14);
 
-    /* 阶段1: 10kHz (6点), k≥6 */
+    /* 阶段1: 10kHz (6点) */
     ADC1_SetRate_10kHz();
     ADC2_SetRate_10kHz();
     for (int i = 0; i < STAGE1_N; i++) {
         uint32_t f = sweep_freqs[i];
-
         AD9833_SetFixedOutput(f, WAVE_SINE);
-        ADC_Acquire();
-        float rms1 = Compute_RMS(CH2_Buffer, LEN);
-
-        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
+        uint32_t n = (uint32_t)(10000.0f / (float)f * 3.0f);
+        if (n < 100) n = 100;
+        if (n > LEN) n = LEN;
+        ADC_Acquire_N(n);
+        float rms1 = Compute_RMS(CH2_Buffer, n);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, n);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    /* : 100kHz (5点), Hann窗 */
+    /* 阶段2: 100kHz (5点) */
     ADC1_SetRate_100kHz();
     ADC2_SetRate_100kHz();
     for (int i = STAGE1_N; i < STAGE1_N + STAGE2_N; i++) {
         uint32_t f = sweep_freqs[i];
         AD9833_SetFixedOutput(f, WAVE_SINE);
-
-        ADC_Acquire();
-        float rms1 = Compute_RMS(CH2_Buffer, LEN);
-
-        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
+        uint32_t n = (uint32_t)(100000.0f / (float)f * 3.0f);
+        if (n < 100) n = 100;
+        if (n > LEN) n = LEN;
+        ADC_Acquire_N(n);
+        float rms1 = Compute_RMS(CH2_Buffer, n);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, n);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    /* 阶段3: 2.4MHz (9点), Hann窗Goertzel, k≥8.5 */
+    /* 阶段3: 2.4MHz (9点) */
     ADC1_SetRate_2400kHz();
     ADC2_SetRate_2400kHz();
     for (int i = STAGE1_N + STAGE2_N; i < SWEEP_POINTS; i++) {
         uint32_t f = sweep_freqs[i];
         AD9833_SetFixedOutput(f, WAVE_SINE);
-
-        ADC_Acquire();
-        float rms1 = Compute_RMS(CH2_Buffer, LEN);
-
-        float rms2 = Compute_RMS(ADC2_DMA_Buffer, LEN);
+        uint32_t n = (uint32_t)(2400000.0f / (float)f * 3.0f);
+        if (n < 100) n = 100;
+        if (n > LEN) n = LEN;
+        ADC_Acquire_N(n);
+        float rms1 = Compute_RMS(CH2_Buffer, n);
+        float rms2 = Compute_RMS(ADC2_DMA_Buffer, n);
         sweep_gain[i] = rms2 * 125.0f / (rms1 > 1e-6f ? rms1 : 1e-6f);
     }
 
-    ADC1_SetRate_100kHz();
-    ADC2_SetRate_100kHz();
-    // for (int i=0;i< 20;i++) {
-    //     printf("%.3f\n",sweep_gain[i]);
-    // }
-
-    /* 低段最小二乘: Y=1/G² vs X=1/f² (6点, 30~350Hz) → f_L */
-    #define LF_N 6
-    float sx=0, sy=0, sxy=0, sx2=0;
-    int n = 0;
-    for (int i = 0; i < LF_N; i++) {
-        float ff = (float)sweep_freqs[i];
-        float g  = sweep_gain[i];
-        if (g < 1e-6f) continue;
-        float x = 1.0f / (ff * ff);
-        float y = 1.0f / (g * g);
-        sx += x; sy += y; sxy += x*y; sx2 += x*x;
-        n++;
-    }
-    if (n >= 2 && n*sx2 - sx*sx > 0) {
-        float kl = (n*sxy - sx*sy) / (n*sx2 - sx*sx);
-        float bl = (sy - kl*sx) / n;
-        g_cutoff_fL = (kl > 0 && bl > 0) ? sqrtf(kl / bl) : 0;
-    } else g_cutoff_fL = 0;
-
-    /* A_mid = gain@1kHz */
     g_mid_gain = sweep_gain[8];
 
     /* 对数域插值: 20点→480点对数均匀网格 */
@@ -781,24 +781,24 @@ void Sweep_LF_Raw(float gains[43])
 }
 
 /* ===================================================================
- * 低频段相频: 40~300Hz/10Hz步/27点, TIM3同步双ADC+10kHz基准
+ * 低频段增益: 360~370Hz/1Hz步/11点, RMS比, N=200快采
  * =================================================================== */
-void Sweep_LF_Phase(float phases[27])
+void Sweep_LF_Gain(float gains[11])
 {
-    AD9833_AmpSet(12);
+#define PHASE_N 200
+    AD9833_AmpSet(14);
     ADC1_SetRate_10kHz();
 
-    int idx = 0;
-
-    for (uint32_t f = 40; f <= 300; f += 10) {
+    for (int i = 0; i < 11; i++) {
+        uint32_t f = 360 + i;
         AD9833_SetFrequency(FREQ_REG_0, f);
-        ADC_Acquire();
-        float phase_out = Goertzel_Phase(CH2_Buffer, LEN, (float)f, 10000.0f);
-        float phase_in  = Goertzel_Phase(CH1_Buffer, LEN, (float)f, 10000.0f);
-        float p = (phase_out - phase_in) * 180.0f / 3.14159265f;
-        if (p < -180.0f) p += 360.0f;
-        phases[idx++] = p;
+        ADC_Acquire_N(PHASE_N);
+
+        float rms1 = Compute_RMS(CH1_Buffer, PHASE_N);
+        float rms2 = Compute_RMS(CH2_Buffer, PHASE_N);
+        gains[i] = (rms1 < 1e-6f) ? 0.0f : rms2 / rms1;
     }
+#undef PHASE_N
 }
 
 /* ===================================================================
