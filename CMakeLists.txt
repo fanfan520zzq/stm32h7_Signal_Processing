@@ -48,7 +48,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Algorithm/protocol.h
         Core/si5351/si5351.c
         Core/si5351/si5351.h
-        Core/si5351/si5351.h
+
 
 )
 
@@ -63,6 +63,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+        Core/Src/Measure.c
+        Core/Src/Measure.h
         Core/Task/MSG.h
         Core/Task/UARTTX.c
         Core/Task/CMD.c
@@ -84,6 +86,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithm/protocol.h
         Core/si5351/si5351.c
         Core/si5351/si5351.h
+        Core/AD9833/ad9833_hal.c
+        Core/AD9833/ad9833_hal.h
 )
 
 
@@ -96,6 +100,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task
         Core/Inc
         Core/Algorithm
+        Core/AD9833
         Drivers/CMSIS/DSP/Include
         Drivers/CMSIS/Include
         Middlewares/ST/ARM/DSP/Inc

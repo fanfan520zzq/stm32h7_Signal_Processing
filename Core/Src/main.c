@@ -23,6 +23,7 @@
 #include "dma.h"
 #include "i2c.h"
 #include "memorymap.h"
+#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -32,6 +33,9 @@
 #include "DDS.h"
 #include "MSG.h"
 #include "si5351.h" // Include SI5351 driver
+#include "ad9833_hal.h"
+#include "ADCTask.h"
+#include "Measure.h" // ADDED: include Measure for Goertzel functions
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -73,7 +77,16 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
+    if (res.ch1 && res.ch2) {
+        for (uint32_t i = 0; i < res.length; i++) {
+             printf("%u,%u\n", res.ch1[i], res.ch2[i]);
+             // Add tiny delay if large prints drown your serial
+             // HAL_Delay(1);
+        }
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -121,25 +134,30 @@ int main(void)
   MX_TIM4_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
-  MX_I2C1_Init();
+  //MX_I2C1_Init();
+  MX_SPI1_Init();
+  MX_ADC3_Init();
+  //MX_I2C3_Init();
+  MX_SPI2_Init();
+  MX_TIM2_Init();
+  MX_TIM5_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
   CMD_Init();
   FFT_Init();
 
-  /* DDS Output Test: Setup DAC1 to output 10kHz, 3.3Vpp Sine Wave (WaveType=2) */
-  DDS1_Update_DATA(50000, 1000, 0);
+  /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
+  // AD9833_Init();
+  // AD9833_SetAmplitude(200);
+  // AD9833_SetPhase(PHASE_REG_0, 180.0f);
+  // AD9833_SetFixedOutput(10000, WAVE_SINE);
+
 
   /* SI5351 Output Test */
-  si5351_Init();
-  si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
+  // si5351_Init();
+  // si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
 
-  extern void Start_Sample(void);
-  extern uint8_t fft_ready_flag;
-  extern uint16_t CH1_Buffer[2048];
-  extern uint16_t CH2_Buffer[2048];
-  uint8_t pga_state = 0;
-  Start_Sample();
 
   /* USER CODE END 2 */
 
@@ -147,75 +165,32 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      // UART_Poll();
-      // CMD_Poll();
-      // ADC_Poll();
-      // FFT_Poll();
+    // 假设目标频率为 10kHz，TIM4 使用 psc=239, arr=9 产生 100kHz 采样率 (若定时器时钟为 240MHz)
+    float target_freq = 1000.0f;
+    float sample_rate = 100000.0f;
+    
+    // 采样 2048 个点
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4(239, 9, 2000);
+    
+    if (res.ch1 && res.ch2) {
+        // 计算两路相位
+        float phase1 = Goertzel_Phase(res.ch1, res.length, target_freq, sample_rate);
+        float phase2 = Goertzel_Phase(res.ch2, res.length, target_freq, sample_rate);
+        
+        // 计算相位差
+        float phase_diff = phase1 - phase2;
+        
+        // 处理相位卷绕，限制在 -PI 到 +PI 之间
+        while(phase_diff > 3.14159265f)  phase_diff -= 2.0f * 3.14159265f;
+        while(phase_diff < -3.14159265f) phase_diff += 2.0f * 3.14159265f;
 
-      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+        float rad = phase_diff * 180 / 3.1415 ;
+        // 打印调试信息，可在串口助手观察
+        printf("P1: %.2f rad, P2: %.2f rad, Diff: %.2f rad\r\n", phase1, phase2, phase_diff);
+    }
+    
+    HAL_Delay(500); // 每0.5秒测一次，防止串口刷屏
 
-      if (fft_ready_flag)
-      {
-          fft_ready_flag = 0;
-
-          /* ── Channel 1 (PB0, ADC1_INP9) Vpp ── */
-          uint16_t ch1_max = 0, ch1_min = 65535;
-          for (int i = 0; i < 2048; i++) {
-              uint16_t v = CH1_Buffer[i];
-              if (v > ch1_max) ch1_max = v;
-              if (v < ch1_min) ch1_min = v;
-          }
-          float ch1_vpp_mv = ((float)(ch1_max - ch1_min) / 65535.0f) * 3300.0f;
-
-          /* ── Channel 2 (PB1, ADC1_INP5) Vpp ── */
-          uint16_t ch2_max = 0, ch2_min = 65535;
-          for (int i = 0; i < 2048; i++) {
-              uint16_t v = CH2_Buffer[i];
-              if (v > ch2_max) ch2_max = v;
-              if (v < ch2_min) ch2_min = v;
-          }
-          float ch2_vpp_mv = ((float)(ch2_max - ch2_min) / 65535.0f) * 3300.0f;
-
-          /* PGA control based on CH2 Vpp */
-          if (ch2_vpp_mv < 390.0f && ch2_vpp_mv > 80.0f) {
-              pga_state = 3;
-          } else if (ch2_vpp_mv < 80.0f && ch2_vpp_mv > 40.0f) {
-              pga_state = 0;
-          } else if (ch2_vpp_mv < 40.0f) {
-              pga_state = 7;
-          } else if (ch2_vpp_mv >= 390.0f && ch2_vpp_mv < 810.0f) {
-              pga_state = 4;
-          } else if (ch2_vpp_mv >= 810.0f) {
-              pga_state = 1;
-          } else {
-              pga_state = 2;
-          }
-
-          switch (pga_state) {
-              case 0: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET); break;
-              case 1: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET); break;
-              case 2: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET); break;
-              case 3: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET); break;
-              case 4: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);   break;
-              case 5: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);   break;
-              case 6: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_RESET); HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);   break;
-              case 7: HAL_GPIO_WritePin(GPIOH, GPIO_PIN_6, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_7, GPIO_PIN_SET);   HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);   break;
-              default: break;
-          }
-
-          printf("CH1 Vpp=%.1fmV  CH2 Vpp=%.1fmV\r\n", ch1_vpp_mv, ch2_vpp_mv);
-
-          /* Print CH1 waveform data (VOFA+ JustFloat format) */
-          for (int i = 0; i < 2048; i++) {
-              float voltage = (CH1_Buffer[i] / 65535.0f) * 3.3f;
-              printf("%f\n", voltage);
-          }
-
-          HAL_Delay(3000);
-          Start_Sample();
-      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -252,7 +227,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 5;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLQ = 5;
   RCC_OscInitStruct.PLL.PLLR = 2;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
