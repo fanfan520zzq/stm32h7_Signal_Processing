@@ -36,6 +36,7 @@
 #include "ad9833_hal.h"
 #include "ADCTask.h"
 #include "Measure.h" // ADDED: include Measure for Goertzel functions
+#include "../Task/2023h_signal_seperate.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -134,10 +135,10 @@ int main(void)
   MX_TIM4_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
-  //MX_I2C1_Init();
+  MX_I2C1_Init();
   MX_SPI1_Init();
   MX_ADC3_Init();
-  //MX_I2C3_Init();
+  MX_I2C3_Init();
   MX_SPI2_Init();
   MX_TIM2_Init();
   MX_TIM5_Init();
@@ -165,31 +166,66 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // 假设目标频率为 10kHz，TIM4 使用 psc=239, arr=9 产生 100kHz 采样率 (若定时器时钟为 240MHz)
-    float target_freq = 1000.0f;
-    float sample_rate = 100000.0f;
-    
-    // 采样 2048 个点
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(239, 9, 2000);
-    
-    if (res.ch1 && res.ch2) {
-        // 计算两路相位
-        float phase1 = Goertzel_Phase(res.ch1, res.length, target_freq, sample_rate);
-        float phase2 = Goertzel_Phase(res.ch2, res.length, target_freq, sample_rate);
-        
-        // 计算相位差
-        float phase_diff = phase1 - phase2;
-        
-        // 处理相位卷绕，限制在 -PI 到 +PI 之间
-        while(phase_diff > 3.14159265f)  phase_diff -= 2.0f * 3.14159265f;
-        while(phase_diff < -3.14159265f) phase_diff += 2.0f * 3.14159265f;
 
-        float rad = phase_diff * 180 / 3.1415 ;
-        // 打印调试信息，可在串口助手观察
-        printf("P1: %.2f rad, P2: %.2f rad, Diff: %.2f rad\r\n", phase1, phase2, phase_diff);
-    }
+    ADC_DualResult_t raw_res = ADC_SampleOnce_TIM4(9, 9, 2048);
+    // if (raw_res.ch1 && raw_res.ch2) {
+    //
+    //     // 如果串口打印 2048 个点太慢（大约需要2-3秒），你可以把这里的 2048 改小一点，比如 200
+    //     for(int k = 0; k < 2048; k++) {
+    //         printf("%d\n", raw_res.ch2[k]);
+    //     }
+    //
+    // }
+
+    // ----------------------------------------------------
+    // 扫描部分
+    // ----------------------------------------------------
+    float sweep_amps[57];
+    float sweep_phases[57];
     
-    HAL_Delay(500); // 每0.5秒测一次，防止串口刷屏
+    // 执行一次 20kHz - 300kHz 的全能扫描
+    // 幅度门限设置为 0.05V (50mV)，测到的 CH2 幅度低于此值时，相位会强制为 0
+    Sweep_Measure_All_Points(sweep_amps, sweep_phases, 0.05f);
+    
+    // 打印 0 到 300kHz 的频谱 (按 1kHz 步进)
+    // 只有 20k, 25k...300k 有真实值，其余补 0。同时把相位转换为角度。
+    printf("--- SPECTRUM START ---\r\n");
+    for (int freq = 0; freq <= 300000; freq += 1000) {
+        if (freq >= 20000 && freq <= 300000 && (freq % 5000) == 0) {
+            int index = (freq - 20000) / 5000;
+            float amp = sweep_amps[index];
+            float phase_deg = sweep_phases[index] * 180.0f / 3.14159265f;
+            // 格式：频率,幅度,相位(度)
+            printf("%d,%.3f,%.2f\r\n", freq, amp, phase_deg);
+        }
+    }
+    printf("--- SPECTRUM END ---\r\n");
+    
+    // ----------------------------------------------------
+    // 核心信号分离与分类
+    // ----------------------------------------------------
+    SignalSeparationResult sep_res = Separate_Signals(sweep_amps, sweep_phases);
+    
+    printf("=== Signal Separation Result ===\r\n");
+    printf("Found %d signals:\r\n", sep_res.valid_count);
+    
+    if (sep_res.valid_count >= 1) {
+        printf("Signal 1: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
+            sep_res.sig1.freq, 
+            (sep_res.sig1.type == SIG_SINE) ? "SINE" : "TRIANGLE",
+            sep_res.sig1.amp,
+            sep_res.sig1.phase * 180.0f / 3.14159265f);
+    }
+    if (sep_res.valid_count >= 2) {
+        printf("Signal 2: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
+            sep_res.sig2.freq, 
+            (sep_res.sig2.type == SIG_SINE) ? "SINE" : "TRIANGLE",
+            sep_res.sig2.amp,
+            sep_res.sig2.phase * 180.0f / 3.14159265f);
+    }
+    printf("================================\r\n\r\n");
+    
+    HAL_Delay(3000); // 串口狂奔比较耗时，防卡死
 
     /* USER CODE END WHILE */
 

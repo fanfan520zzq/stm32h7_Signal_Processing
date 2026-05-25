@@ -48,6 +48,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Algorithm/protocol.h
         Core/si5351/si5351.c
         Core/si5351/si5351.h
+        Core/Task/2023h_signal_seperate.c
+        Core/Task/2023h_signal_seperate.h
 
 
 )
@@ -65,6 +67,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
         Core/Src/Measure.c
         Core/Src/Measure.h
+        Core/Task/2023h_signal_seperate.c
+        Core/Task/2023h_signal_seperate.h
         Core/Task/MSG.h
         Core/Task/UARTTX.c
         Core/Task/CMD.c
@@ -104,7 +108,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Drivers/CMSIS/DSP/Include
         Drivers/CMSIS/Include
         Middlewares/ST/ARM/DSP/Inc
-    Core/si5351
+        Core/si5351
 )
 
 # Add project symbols (macros)

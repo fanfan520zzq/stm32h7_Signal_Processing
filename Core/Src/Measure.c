@@ -197,5 +197,3 @@ float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sampl
 
     return 4.0f * mag / (float)N * ADC_TO_VOLT;
 }
-
-
