@@ -1,94 +1,163 @@
-//
-// Created by Lenovo on 2026/2/17.
-//
-
 #include "DDS.h"
 
+#define DAC_BIAS_1_3V      1613.18f  /* 1.3 V DC = 4096 * 1.3 / 3.3 */
+#define DAC_AMP_0_5V       620.606f  /* 0.5 V amplitude = 4096 * 0.5 / 3.3 */
+#define DDS_PI             3.14159265f
 
-static int16_t SinBuffer[1024],SquBuffer[1024],TriBuffer[1024];
-uint16_t Buffer2[1024] __attribute__((section(".dma_buffer")));
-uint16_t Buffer1[1024] __attribute__((section(".dma_buffer")));
+// 双缓冲 DMA，大小必须是偶数
+#define DDS_BUF_SIZE       1000
 
-static uint32_t phase_index1=0,FTW1;
-static uint32_t phase_index2=0,FTW2;
-static uint16_t Buffer1_Len,Buffer2_Len;
+uint16_t Buffer1[DDS_BUF_SIZE] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
+uint16_t Buffer2[DDS_BUF_SIZE] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 
-#define DAC_BIAS_1V    1241.21f  /* 1V DC = 4096 * 1.0 / 3.3 */
-#define DAC_AMP_0_5V   620.606f  /* 0.5V amplitude = 4096 * 0.5 / 3.3 */
+volatile uint32_t dds1_phase_acc = 0;
+volatile uint32_t dds1_ftw = 0;
+volatile uint16_t dds1_vpp = 1000;
+volatile uint8_t  dds1_wave = 0;
+
+volatile uint32_t dds2_phase_acc = 0;
+volatile uint32_t dds2_ftw = 0;
+volatile uint16_t dds2_vpp = 1000;
+volatile uint8_t  dds2_wave = 0;
+
+#define LUT_SIZE 1024
+float SineLUT[LUT_SIZE];
+float TriLUT[LUT_SIZE];
+
+uint16_t ActiveLUT1[LUT_SIZE];
+uint16_t ActiveLUT2[LUT_SIZE];
+
+static uint16_t DDS_Clamp12(float value)
+{
+    if (value < 0.0f) return 0u;
+    if (value > 4095.0f) return 4095u;
+    return (uint16_t)value;
+}
+
+static void DDS_RebuildActiveLUT(uint16_t *activeLut, uint16_t vpp, uint8_t waveType)
+{
+    float scale = (float)vpp / 1000.0f;
+    for (int i = 0; i < LUT_SIZE; i++) {
+        float y = 0.0f;
+        if (waveType == 1) { /* SIG_SINE */
+            y = SineLUT[i];
+        } else if (waveType == 2) { /* SIG_TRIANGLE */
+            y = TriLUT[i];
+        }
+        activeLut[i] = DDS_Clamp12(DAC_BIAS_1_3V + DAC_AMP_0_5V * scale * y);
+    }
+}
 
 void DDS_Init(void)
 {
-    for(uint16_t i = 0; i < 1024; i++)
-    {
-        SinBuffer[i] = (int16_t)(DAC_AMP_0_5V * sinf((2.0f * 3.1415926f * i) / 1024.0f));
-        SquBuffer[i] = (i < 512) ? (int16_t)DAC_AMP_0_5V : (int16_t)-DAC_AMP_0_5V;
-        if(i <= 512) TriBuffer[i] = (int16_t)(i * (2.0f * DAC_AMP_0_5V) / 512.0f - DAC_AMP_0_5V);
-        else  TriBuffer[i] = (int16_t)((1024 - i) * (2.0f * DAC_AMP_0_5V) / 512.0f - DAC_AMP_0_5V);
+    for (int i = 0; i < LUT_SIZE; i++) {
+        float p = (float)i / (float)LUT_SIZE * 2.0f * DDS_PI;
+        SineLUT[i] = sinf(p);
+        TriLUT[i] = (2.0f / DDS_PI) * asinf(sinf(p));
     }
+
+    DDS_RebuildActiveLUT(ActiveLUT1, 1000, 1);
+    DDS_RebuildActiveLUT(ActiveLUT2, 1000, 1);
 
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
     HAL_TIM_Base_Start(&htim6);
-    HAL_TIM_Base_Start(&htim7);
 }
 
+// =================== DDS1 ===================
+void DDS1_Update_DATA(uint32_t freq, uint16_t vpp, uint8_t waveType)
+{
+    dds1_ftw = (uint32_t)(((uint64_t)freq * 4294967296ULL) / 1000000ULL);
+    
+    // 如果振幅或波形发生改变，重新生成整数查找表
+    if (dds1_vpp != vpp || dds1_wave != waveType) {
+        dds1_vpp = vpp;
+        dds1_wave = waveType;
+        DDS_RebuildActiveLUT(ActiveLUT1, vpp, waveType);
+    }
+}
 
-void DDS1_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
+void DDS1_Update_FTW(uint32_t ftw)
+{
+    dds1_ftw = ftw;
+}
+
+void DDS1_Add_Phase(int32_t phase_offset)
+{
+    dds1_phase_acc += phase_offset;
+}
+
+void DDS1_Start(void)
+{
+    // 启动前先填充一下初始数据
+    for (int i = 0; i < DDS_BUF_SIZE; i++) {
+        dds1_phase_acc += dds1_ftw;
+        Buffer1[i] = ActiveLUT1[dds1_phase_acc >> 22];
+    }
+    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)Buffer1, DDS_BUF_SIZE, DAC_ALIGN_12B_R);
+}
+
+// =================== DDS2 ===================
+void DDS2_Update_DATA(uint32_t freq, uint16_t vpp, uint8_t waveType)
+{
+    dds2_ftw = (uint32_t)(((uint64_t)freq * 4294967296ULL) / 1000000ULL);
+    
+    if (dds2_vpp != vpp || dds2_wave != waveType) {
+        dds2_vpp = vpp;
+        dds2_wave = waveType;
+        DDS_RebuildActiveLUT(ActiveLUT2, vpp, waveType);
+    }
+}
+
+void DDS2_Update_FTW(uint32_t ftw)
+{
+    dds2_ftw = ftw;
+}
+
+void DDS2_Start(void)
+{
+    for (int i = 0; i < DDS_BUF_SIZE; i++) {
+        dds2_phase_acc += dds2_ftw;
+        Buffer2[i] = ActiveLUT2[dds2_phase_acc >> 22];
+    }
+    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)Buffer2, DDS_BUF_SIZE, DAC_ALIGN_12B_R);
+}
+
+void DDS_Stop(void)
+{
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-
-    phase_index1=0;
-    FTW1=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer1_Len = (uint32_t)(DDS_TIM / freq);
-
-    float scale = (float)vpp / 1000.0f;
-    for(int i=0;i<Buffer1_Len;i++){
-        switch(waveType){
-            case 0:
-                Buffer1[i]=(uint16_t)(SinBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 1:
-                Buffer1[i]=(uint16_t)(SquBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 2:
-                Buffer1[i]=(uint16_t)(TriBuffer[phase_index1>>22] * scale + DAC_BIAS_1V);
-                break;
-            default:
-                Buffer1[i]=(uint16_t)DAC_BIAS_1V;
-                break;
-        }
-        phase_index1+=FTW1;
-    }
-
-    //SCB_CleanDCache_by_Addr((uint32_t*)Buffer1, Buffer1_Len * sizeof(uint16_t));
-    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)Buffer1, Buffer1_Len, DAC_ALIGN_12B_R);
+    HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
 }
 
-void DDS2_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
-    HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
-
-    phase_index2=0;
-    FTW2=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer2_Len=(uint32_t)(DDS_TIM / freq);
-
-    float scale = (float)vpp / 1000.0f;
-    for(int i=0;i<Buffer2_Len;i++){
-        switch(waveType){
-            case 0:
-                Buffer2[i]=(uint16_t)(SinBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 1:
-                Buffer2[i]=(uint16_t)(SquBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
-                break;
-            case 2:
-                Buffer2[i]=(uint16_t)(TriBuffer[phase_index2>>22] * scale + DAC_BIAS_1V);
-                break;
-            default:
-                Buffer2[i]=(uint16_t)DAC_BIAS_1V;
-                break;
-        }
-        phase_index2+=FTW2;
+// =================== DMA 回调 ===================
+void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
+{
+    for (int i = 0; i < DDS_BUF_SIZE / 2; i++) {
+        dds1_phase_acc += dds1_ftw;
+        Buffer1[i] = ActiveLUT1[dds1_phase_acc >> 22];
     }
-    //SCB_CleanDCache_by_Addr((uint32_t*)Buffer2, Buffer2_Len * sizeof(uint16_t));
-    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)Buffer2, Buffer2_Len, DAC_ALIGN_12B_R);
+}
 
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
+{
+    for (int i = DDS_BUF_SIZE / 2; i < DDS_BUF_SIZE; i++) {
+        dds1_phase_acc += dds1_ftw;
+        Buffer1[i] = ActiveLUT1[dds1_phase_acc >> 22];
+    }
+}
+
+void HAL_DACEx_ConvHalfCpltCallbackCh2(DAC_HandleTypeDef *hdac)
+{
+    for (int i = 0; i < DDS_BUF_SIZE / 2; i++) {
+        dds2_phase_acc += dds2_ftw;
+        Buffer2[i] = ActiveLUT2[dds2_phase_acc >> 22];
+    }
+}
+
+void HAL_DACEx_ConvCpltCallbackCh2(DAC_HandleTypeDef *hdac)
+{
+    for (int i = DDS_BUF_SIZE / 2; i < DDS_BUF_SIZE; i++) {
+        dds2_phase_acc += dds2_ftw;
+        Buffer2[i] = ActiveLUT2[dds2_phase_acc >> 22];
+    }
 }

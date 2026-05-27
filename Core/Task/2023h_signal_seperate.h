@@ -34,4 +34,7 @@ void Sweep_Measure_All_Points(float out_amps[57], float out_phases[57], float am
 
 // 核心信号分类与分离算法：从频谱数据中提取基波，消除谐波干扰，带矢量补偿
 SignalSeparationResult Separate_Signals(const float sweep_amps[57], const float sweep_phases[57]);
+
+// 顶层封装接口：一键完成扫描、分离、分类（内部保留了可开启的 printf 打印代码）
+SignalSeparationResult Execute_Signal_Separation(void);
 #endif //IIT6_OSCILLISCOPE_2023H_SIGNAL_SEPERATE_H

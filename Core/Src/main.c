@@ -30,15 +30,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "DDS.h"
-#include "MSG.h"
-#include "si5351.h" // Include SI5351 driver
-#include "ad9833_hal.h"
-#include "ADCTask.h"
-#include "Measure.h" // ADDED: include Measure for Goertzel functions
-#include "../Task/2023h_signal_seperate.h"
 #include <stdio.h>
-#include <math.h>
+#include "2023h_signal_seperate.h"
+#include "2023h_dpll.h"
+#include "DDS.h"
+#include "ADCTask.h"
+#include "Measure.h"
+#include "MSG.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -78,16 +76,109 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
+void ADC_DebugPrint_Dual(uint32_t length) {
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4_Current(length);
     if (res.ch1 && res.ch2) {
         for (uint32_t i = 0; i < res.length; i++) {
-             printf("%u,%u\n", res.ch1[i], res.ch2[i]);
-             // Add tiny delay if large prints drown your serial
-             // HAL_Delay(1);
+//              printf("%u,%u\n", res.ch1[i], res.ch2[i]);
         }
     }
 }
+
+static const char *WaveTypeName(WaveType type)
+{
+    switch (type) {
+        case SIG_SINE:
+            return "SINE";
+        case SIG_TRIANGLE:
+            return "TRIANGLE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static void PrintSignalInfo(const char *name, const SignalInfo *sig)
+{
+//     printf("%s: freq=%lu Hz, amp=%.3f Vpp, phase=%.2f deg, type=%s\r\n",
+//            name,
+//            (unsigned long)sig->freq,
+//            sig->amp,
+//            sig->phase * 180.0f / 3.14159265f,
+//            WaveTypeName(sig->type));
+}
+
+// ==========================================
+// 动态幅频追踪状态机参数 (裸露便于调试)
+// ==========================================
+typedef struct {
+    float amp_update_threshold_v;    // 幅度更新阈值：幅度变化超过此值(V)才会刷新 DAC (避免频繁刷缓存)
+    float lock_loss_amp_drop_v;      // 失锁幅度阈值：信号幅度低于此值(V)认为断线，触发重扫
+    float lock_loss_phase_err_rad;   // 失锁相位阈值：DPLL相位误差大于多少弧度认为频率突变
+    uint32_t lock_loss_err_count;    // 失锁容忍次数：连续多少次相位超标才触发重扫 (防误判)
+} TrackingParams;
+
+TrackingParams g_track_params = {
+    .amp_update_threshold_v = 0.05f, 
+    .lock_loss_amp_drop_v = 0.1f,
+    .lock_loss_phase_err_rad = 1.0f,  // 约 60 度的相差
+    .lock_loss_err_count = 10         // 连续 10 次 (约100ms) 超标则触发重新扫频
+};
+
+// 重建信号独立相位偏移（对原信号相位的相对偏移，0-180）
+float g_ch1_phase_offset_deg = 0.0f;
+float g_ch2_phase_offset_deg = 0.0f;
+
+// 发挥部分二模式：两路DAC互相的相位强制绑定
+uint8_t g_mode_part2_enable = 1;         // 默认开启强制绑定模式
+float g_mutual_phase_offset_deg = 0.0f;  // 两路DAC互相的相位偏移
+
+// 系统主模式控制（串口控制）
+uint8_t g_mode_auto_separation = 1;
+
+typedef enum {
+    SYS_STATE_SWEEP,
+    SYS_STATE_TRACK
+} SysState;
+SysState current_state = SYS_STATE_SWEEP;
+
+// 串口指令解析
+void Process_UART_Command(void) {
+    uint8_t byte;
+    static uint8_t rx_buf[3];
+    static uint8_t rx_idx = 0;
+    while (UART1_Read_Byte(&byte)) {
+        if (rx_idx == 0) {
+            if (byte == 0xAF) {
+                rx_buf[rx_idx++] = byte;
+            }
+        } else if (rx_idx == 1) {
+            rx_buf[rx_idx++] = byte;
+        } else if (rx_idx == 2) {
+            if (byte == 0xFA) {
+                uint8_t cmd = rx_buf[1];
+                if (cmd == 0x12) {
+                    g_mode_auto_separation = 1;
+                    current_state = SYS_STATE_SWEEP; // 重新开启测量
+                } else if (cmd == 0x23) {
+                    g_mode_auto_separation = 0; // 关闭测量，冻结频率
+                } else {
+                    // 相位输入 (0~180 即 0x00~0xB4)
+                    if (g_mode_auto_separation == 0) {
+                        g_mutual_phase_offset_deg = (float)cmd;
+                        
+                        // 绝对强制对齐：读取当前 CH1 累加器，直接写 CH2
+                        // 原理：phi2 = n * phi1 - offset（模 2^32 自动处理回绕）
+                        // 与差分不同，发 0 度必然对齐，发任何角度立刻精确生效
+                        DPLL2023H_ForcePhaseAlign(g_mutual_phase_offset_deg);
+                    }
+                }
+            }
+            rx_idx = 0;
+        }
+    }
+}
+// ==========================================
+
 /* USER CODE END 0 */
 
 /**
@@ -128,7 +219,6 @@ int main(void)
   MX_DMA_Init();
   MX_DAC1_Init();
   MX_TIM6_Init();
-  MX_TIM7_Init();
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   MX_ADC1_Init();
@@ -143,22 +233,17 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM5_Init();
   MX_USART3_UART_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
   CMD_Init();
   FFT_Init();
+  DDS_Init();
 
-  /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
-  // AD9833_Init();
-  // AD9833_SetAmplitude(200);
-  // AD9833_SetPhase(PHASE_REG_0, 180.0f);
-  // AD9833_SetFixedOutput(10000, WAVE_SINE);
-
-
-  /* SI5351 Output Test */
-  // si5351_Init();
-  // si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
-
+  // ==========================================
+  // 系统主状态机
+  // ==========================================
+  SignalSeparationResult sep_res;
 
   /* USER CODE END 2 */
 
@@ -166,67 +251,106 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+      // 1. 处理串口指令
+      Process_UART_Command();
+      
+      // 2. 判断是否在冻结模式
+      if (g_mode_auto_separation == 0) {
+          HAL_Delay(10);
+          continue; // 冻结状态下，完全不采ADC，不更新DPLL，仅靠DMA维持原频率发送
+      }
 
-    ADC_DualResult_t raw_res = ADC_SampleOnce_TIM4(9, 9, 2048);
-    // if (raw_res.ch1 && raw_res.ch2) {
-    //
-    //     // 如果串口打印 2048 个点太慢（大约需要2-3秒），你可以把这里的 2048 改小一点，比如 200
-    //     for(int k = 0; k < 2048; k++) {
-    //         printf("%d\n", raw_res.ch2[k]);
-    //     }
-    //
-    // }
+      if (current_state == SYS_STATE_SWEEP) {
+//           printf("\r\n[APP] STATE: SWEEPING...\r\n");
+          sep_res = Execute_Signal_Separation();
+//           printf("[APP] Sweep found %d signals.\r\n", sep_res.valid_count);
+          
+          if (sep_res.valid_count > 0) {
+              if (sep_res.valid_count >= 1) PrintSignalInfo("A", &sep_res.sig1);
+              if (sep_res.valid_count >= 2) PrintSignalInfo("B", &sep_res.sig2);
+              
+              // 正常锁相初始化：各通道独立追踪各自的输入信号
+              // 注意：不调用 SetMutualPhase，保持 s_mutual_phase_enable=0
+              // ForcePhaseAlign 只在冻结模式下（UART相位命令）才调用
+              DPLL2023H_Init(&sep_res);
+              
+//               printf("[APP] Entering TRACK state.\r\n");
+              current_state = SYS_STATE_TRACK;
+          } else {
+              HAL_Delay(500); // 没搜到信号，休息半秒再搜
+          }
+      } 
+      else if (current_state == SYS_STATE_TRACK) {
+          // 1. 采样 (自动阻塞等待约0.8ms)
+          ADC_DualResult_t pll_adc = ADC_SampleOnce_TIM4_Current(1920);
 
-    // ----------------------------------------------------
-    // 扫描部分
-    // ----------------------------------------------------
-    float sweep_amps[57];
-    float sweep_phases[57];
-    
-    // 执行一次 20kHz - 300kHz 的全能扫描
-    // 幅度门限设置为 0.05V (50mV)，测到的 CH2 幅度低于此值时，相位会强制为 0
-    Sweep_Measure_All_Points(sweep_amps, sweep_phases, 0.05f);
-    
-    // 打印 0 到 300kHz 的频谱 (按 1kHz 步进)
-    // 只有 20k, 25k...300k 有真实值，其余补 0。同时把相位转换为角度。
-    printf("--- SPECTRUM START ---\r\n");
-    for (int freq = 0; freq <= 300000; freq += 1000) {
-        if (freq >= 20000 && freq <= 300000 && (freq % 5000) == 0) {
-            int index = (freq - 20000) / 5000;
-            float amp = sweep_amps[index];
-            float phase_deg = sweep_phases[index] * 180.0f / 3.14159265f;
-            // 格式：频率,幅度,相位(度)
-            printf("%d,%.3f,%.2f\r\n", freq, amp, phase_deg);
-        }
-    }
-    printf("--- SPECTRUM END ---\r\n");
-    
-    // ----------------------------------------------------
-    // 核心信号分离与分类
-    // ----------------------------------------------------
-    SignalSeparationResult sep_res = Separate_Signals(sweep_amps, sweep_phases);
-    
-    printf("=== Signal Separation Result ===\r\n");
-    printf("Found %d signals:\r\n", sep_res.valid_count);
-    
-    if (sep_res.valid_count >= 1) {
-        printf("Signal 1: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
-            sep_res.sig1.freq, 
-            (sep_res.sig1.type == SIG_SINE) ? "SINE" : "TRIANGLE",
-            sep_res.sig1.amp,
-            sep_res.sig1.phase * 180.0f / 3.14159265f);
-    }
-    if (sep_res.valid_count >= 2) {
-        printf("Signal 2: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
-            sep_res.sig2.freq, 
-            (sep_res.sig2.type == SIG_SINE) ? "SINE" : "TRIANGLE",
-            sep_res.sig2.amp,
-            sep_res.sig2.phase * 180.0f / 3.14159265f);
-    }
-    printf("================================\r\n\r\n");
-    
-    HAL_Delay(3000); // 串口狂奔比较耗时，防卡死
+          // 2. 计算双信号情况
+          uint8_t lost_lock = 0;
+          SignalSeparationResult current_sep;
+          current_sep.valid_count = sep_res.valid_count;
+          current_sep.sig1 = sep_res.sig1;
+          current_sep.sig2 = sep_res.sig2;
+          
+          if (current_sep.valid_count >= 1) {
+              // 实时提取幅度和相位
+              float cur_amp = Goertzel_Vpp(pll_adc.ch2, pll_adc.length, current_sep.sig1.freq, 2400000.0f);
+              if (cur_amp < g_track_params.lock_loss_amp_drop_v) {
+//                   printf("\r\n[APP] CH1 Signal lost! (Amp %.2f < %.2f). Resweeping...\r\n", cur_amp, g_track_params.lock_loss_amp_drop_v);
+                  lost_lock = 1;
+              } else {
+                  current_sep.sig1.amp = cur_amp;
+                  current_sep.sig1.phase = Goertzel_Phase(pll_adc.ch2, pll_adc.length, current_sep.sig1.freq, 2400000.0f);
+              }
+          }
+          
+          if (current_sep.valid_count >= 2) {
+              float cur_amp = Goertzel_Vpp(pll_adc.ch2, pll_adc.length, current_sep.sig2.freq, 2400000.0f);
+              if (cur_amp < g_track_params.lock_loss_amp_drop_v) {
+//                   printf("\r\n[APP] CH2 Signal lost! Resweeping...\r\n");
+                  lost_lock = 1;
+              } else {
+                  current_sep.sig2.amp = cur_amp;
+                  current_sep.sig2.phase = Goertzel_Phase(pll_adc.ch2, pll_adc.length, current_sep.sig2.freq, 2400000.0f);
+              }
+          }
 
+          if (lost_lock) {
+              current_state = SYS_STATE_SWEEP;
+              continue;
+          }
+
+          // 设置用户请求的相位偏移
+          DPLL2023H_SetPhaseOffset(0, g_ch1_phase_offset_deg);
+          DPLL2023H_SetPhaseOffset(1, g_ch2_phase_offset_deg);
+          
+          // 如果开启了互相绑定模式，实时更新互相的相位偏移
+          DPLL2023H_SetMutualPhase(g_mode_part2_enable, g_mutual_phase_offset_deg);
+
+          // 3. dpll（计算相位差->环路滤波器->更新ftw)
+          DPLL2023H_Update(&current_sep);
+
+          // 4. 频率跳变侦测 (相差过大且持续)
+          if (DPLL2023H_IsLostLock(g_track_params.lock_loss_phase_err_rad, g_track_params.lock_loss_err_count)) {
+//               printf("\r\n[APP] PLL Lock Lost! Frequency might have jumped. Resweeping...\r\n");
+              current_state = SYS_STATE_SWEEP;
+              continue;
+          }
+
+          // 5. 动态幅度更新判断
+          if (current_sep.valid_count >= 1 && fabs(current_sep.sig1.amp - sep_res.sig1.amp) > g_track_params.amp_update_threshold_v) {
+              DDS1_Update_DATA(current_sep.sig1.freq, current_sep.sig1.amp * 1000.0f, current_sep.sig1.type);
+              sep_res.sig1.amp = current_sep.sig1.amp; // 更新基准
+//               printf("[APP] CH1 Amp updated to %.2f V\r\n", current_sep.sig1.amp);
+          }
+          if (current_sep.valid_count >= 2 && fabs(current_sep.sig2.amp - sep_res.sig2.amp) > g_track_params.amp_update_threshold_v) {
+              DDS2_Update_DATA(current_sep.sig2.freq, current_sep.sig2.amp * 1000.0f, current_sep.sig2.type);
+              sep_res.sig2.amp = current_sep.sig2.amp;
+//               printf("[APP] CH2 Amp updated to %.2f V\r\n", current_sep.sig2.amp);
+          }
+
+          // 6. haldelay(10)
+          HAL_Delay(10);
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -378,7 +502,7 @@ void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+//      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

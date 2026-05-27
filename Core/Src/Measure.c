@@ -173,7 +173,7 @@ static float Goertzel_Vpp_Hann(const uint16_t *buf, uint32_t N, float f_sig, flo
         if (buf[idx] > v_max) v_max = buf[idx];
         if (buf[idx] < v_min) v_min = buf[idx];
     }
-    printf("Goertzel Hann Debug: f_sig=%.0f, v_max=%d, v_min=%d, Vpp_RAW=%d\n", f_sig, v_max, v_min, v_max - v_min);
+//     printf("Goertzel Hann Debug: f_sig=%.0f, v_max=%d, v_min=%d, Vpp_RAW=%d\n", f_sig, v_max, v_min, v_max - v_min);
 
     return 4.0f * mag / (float)N * ADC_TO_VOLT * 2.0f;
 }

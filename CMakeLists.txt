@@ -69,6 +69,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/Measure.h
         Core/Task/2023h_signal_seperate.c
         Core/Task/2023h_signal_seperate.h
+        Core/Task/2023h_reconstruct.c
+        Core/Task/2023h_reconstruct.h
+        Core/Task/2023h_dpll.c
+        Core/Task/2023h_dpll.h
         Core/Task/MSG.h
         Core/Task/UARTTX.c
         Core/Task/CMD.c

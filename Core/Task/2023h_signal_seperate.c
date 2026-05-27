@@ -30,11 +30,8 @@ void Sweep_Measure_All_Points(float out_amps[], float out_phases[], float amp_th
     // 分频系数就必须是 100，即 psc=9, arr=9。 (10 * 10 = 100)
     float f_sample = 2400000.0f;  
 
-    // 采样点数依然保持 1920 点。
-    // 在 2.4MHz 采样率下，1920 个点的分辨率是 2.4M/1920 = 1250Hz。
-    // 20k, 25k, 60k ... 全部都是 1250Hz 的完美整数倍！
-    // 继续保持 100% 消除频谱泄露。
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(9, 9, 1920);
+    // 采样点数维持 1920 点
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4_Current(1920);
     
     if (!res.ch2) {
         // 采样失败直接清零并返回
@@ -69,7 +66,7 @@ void Sweep_Measure_All_Points(float out_amps[], float out_phases[], float amp_th
 
 // 核心信号分类与分离算法
 SignalSeparationResult Separate_Signals(const float sweep_amps[57], const float sweep_phases[57]) {
-    SignalSeparationResult res;
+    SignalSeparationResult res = {0};
     res.valid_count = 0;
     res.sig1.type = WAVE_UNKNOWN;
     res.sig2.type = WAVE_UNKNOWN;
@@ -161,5 +158,55 @@ SignalSeparationResult Separate_Signals(const float sweep_amps[57], const float 
     }
     
     return res;
+}
+
+// 顶层封装接口：一键完成扫描、分离、分类（内部保留了可开启的 printf 打印代码）
+SignalSeparationResult Execute_Signal_Separation(void) {
+    float sweep_amps[57];
+    float sweep_phases[57];
+    
+    // 1. 执行全能扫描 (门限设为 0.05V)
+    Sweep_Measure_All_Points(sweep_amps, sweep_phases, 0.05f);
+    
+    /* 
+    // 【调试用】取消注释以打印频谱
+//     printf("--- SPECTRUM START ---\r\n");
+    for (int freq = 0; freq <= 300000; freq += 1000) {
+        if (freq >= 20000 && freq <= 300000 && (freq % 5000) == 0) {
+            int index = (freq - 20000) / 5000;
+            float amp = sweep_amps[index];
+            float phase_deg = sweep_phases[index] * 180.0f / 3.14159265f;
+//             printf("%d,%.3f,%.2f\r\n", freq, amp, phase_deg);
+        }
+    }
+//     printf("--- SPECTRUM END ---\r\n");
+    */
+
+    // 2. 核心分离分类
+    SignalSeparationResult sep_res = Separate_Signals(sweep_amps, sweep_phases);
+    
+    /*
+    // 【调试用】取消注释以打印分离结果
+//     printf("=== Signal Separation Result ===\r\n");
+//     printf("Found %d signals:\r\n", sep_res.valid_count);
+    
+    if (sep_res.valid_count >= 1) {
+//         printf("Signal 1: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
+//             sep_res.sig1.freq, 
+//             (sep_res.sig1.type == SIG_SINE) ? "SINE" : "TRIANGLE",
+//             sep_res.sig1.amp,
+//             sep_res.sig1.phase * 180.0f / 3.14159265f);
+    }
+    if (sep_res.valid_count >= 2) {
+//         printf("Signal 2: %ld Hz, Type: %s, Amp: %.3f V, Phase: %.2f deg\r\n", 
+//             sep_res.sig2.freq, 
+//             (sep_res.sig2.type == SIG_SINE) ? "SINE" : "TRIANGLE",
+//             sep_res.sig2.amp,
+//             sep_res.sig2.phase * 180.0f / 3.14159265f);
+    }
+//     printf("================================\r\n\r\n");
+    */
+    
+    return sep_res;
 }
 
