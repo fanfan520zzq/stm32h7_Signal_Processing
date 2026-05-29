@@ -76,9 +76,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task/FFTTask.c
         Core/Task/FFTTask.h
 
-
         Core/Task/LCD.c
         Core/Task/LCD.h
+        
+        # 核心业务
+        Core/Task/DPLLTask.c
+        Core/Task/SerialCmdTask.c
+
         Core/Algorithm/lttb.c
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
