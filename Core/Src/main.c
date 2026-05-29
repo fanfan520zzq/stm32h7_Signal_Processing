@@ -21,23 +21,18 @@
 #include "adc.h"
 #include "dac.h"
 #include "dma.h"
-#include "i2c.h"
 #include "memorymap.h"
-#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "DDS.h"
 #include "MSG.h"
-#include "si5351.h" // Include SI5351 driver
-#include "ad9833_hal.h"
-#include "ADCTask.h"
-#include "Measure.h" // ADDED: include Measure for Goertzel functions
 #include <stdio.h>
 #include <math.h>
+#include "dds_core.h"
+#include "hybrid_dpll.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,35 +53,213 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+#define ADC_BUF_SIZE 2048
+__attribute__((section(".dma_buffer"))) uint16_t adc_buffer[ADC_BUF_SIZE];
 
+// ==== 调试参数裸露区 ====
+float debug_target_freq = 1000.0f; // [阶段一] DDS 输出频率 (Hz)
+float debug_phase_shift = 0.0f;    // [阶段四] 移相度数
+uint8_t dpll_enable = 1;           // [阶段三] DPLL 闭环开关
+float debug_external_freq = 10000.0f; // [手动模式] 用户手动指定外部信号源的真实频率！
+
+// DPLL 与过零检测调试变量
+float debug_measured_freq = 0.0f;  // 测得的输入频率 (Hz)
+float debug_phase_error = 0.0f;    // 相位误差 (周期)
+float debug_integral = 0.0f;       // PI 环路积分项
+float dpll_kp = 70.0f;             // 修正：增大增益以覆盖硬件时钟频偏引起的拉入范围
+float dpll_ki = 0.06f;              // 修正：加快积分速度
+float input_vpp_v = 1.0f;          // 测量到的输入 Vpp
+// ========================
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 extern void UART1_Receive_Start(void);
 extern void CMD_Init(void);
-extern void FFT_Init(void);
 extern void UART_Poll(void);
 extern void CMD_Poll(void);
-extern void ADC_Poll(void);
-extern void FFT_Poll(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
-    if (res.ch1 && res.ch2) {
-        for (uint32_t i = 0; i < res.length; i++) {
-             printf("%u,%u\n", res.ch1[i], res.ch2[i]);
-             // Add tiny delay if large prints drown your serial
-             // HAL_Delay(1);
+extern DAC_HandleTypeDef hdac1;
+extern ADC_HandleTypeDef hadc1;
+
+// ==== 阶段三/四 DPLL 核心逻辑 (混合架构 Hybrid Block DPLL) ====
+// 移除 static，方便在 CLion 中随时监视！
+uint32_t dc_offset = 32768; // 16-bit ADC 的中点
+uint16_t adc_max = 0;
+uint16_t adc_min = 65535;   // STM32H7 是 16位 ADC！
+
+static uint32_t last_chunk_dwt = 0;
+static double software_nco_phase = 0.0;
+static double dpll_integral = 0.0;
+static double actual_dac_freq = 1000.0; // 起始预测频率
+static uint8_t first_chunk = 1;
+
+extern uint32_t SystemCoreClock; // H7系统主频 (通常 400MHz 或 480MHz)
+
+// 引入全局精确时间戳，消除主循环调用延迟带来的相位抖动！
+volatile uint32_t adc_isr_dwt = 0;
+volatile uint8_t adc_chunk_ready = 0;
+
+void Process_ADC_Chunk(uint16_t* buffer, uint16_t length, uint32_t current_dwt) {
+    // 1. 计算两次 Chunk 之间的物理绝对时间 dt
+    static uint32_t last_chunk_dwt = 0;
+    
+    uint32_t delta_cycles = current_dwt - last_chunk_dwt;
+    last_chunk_dwt = current_dwt;
+    
+    double dt = (double)delta_cycles / (double)SystemCoreClock;
+    if (first_chunk || dt > 1.0) {
+        dt = 0.0; // 首次启动，或者断点暂停恢复后，消除巨大的错误 dt
+        first_chunk = 0;
+    }
+    
+    // 2. 算极值与 DC Offset (顺便跟踪输入幅度)
+    for (uint16_t i = 0; i < length; i++) {
+        if (buffer[i] > adc_max) adc_max = buffer[i];
+        if (buffer[i] < adc_min) adc_min = buffer[i];
+    }
+    
+    static uint32_t chunk_counter = 0;
+    chunk_counter++;
+    if (chunk_counter >= 10) { 
+        dc_offset = (adc_max + adc_min) / 2;
+        input_vpp_v = (adc_max - adc_min) * (3.3f / 65535.0f);
+        adc_max = 0;
+        adc_min = 65535;
+        chunk_counter = 0;
+    }
+    
+    // 3. 寻找本数据块内的第一个上升沿过零点（加入软件施密特触发器/迟滞比较抗噪！）
+    double first_up_idx = -1.0;
+    uint8_t armed = (buffer[0] < dc_offset - 500); // 必须跌破底线才能武装
+    for (uint16_t i = 1; i < length; i++) {
+        if (buffer[i] < dc_offset - 500) {
+            armed = 1; // 真正跌到底部，武装上升沿检测
+        }
+        if (armed && buffer[i-1] < dc_offset && buffer[i] >= dc_offset) {
+            double frac = (double)(dc_offset - buffer[i-1]) / (buffer[i] - buffer[i-1]);
+            first_up_idx = (double)(i - 1) + frac;
+            break;
         }
     }
+    
+    // 使用我们自己写的极高精度过零测频算法来测频！
+    double coarse_freq = DSP_Measure_Block_Freq(buffer, length, dc_offset, 200000.0);
+    // 如果频率太低（比如100Hz），一个2048的块（10ms）里只有1个上升沿，测不出频率，就返回了-1.0。
+    // 这时我们退回到使用用户手动设置的 debug_external_freq。
+    if (coarse_freq < 0.0) {
+        coarse_freq = (double)debug_external_freq;
+    }
+    
+    static double dpll_integral = 0.0;
+    static double center_freq = -1.0;
+    static double software_nco_phase = 0.0;
+    
+    // 如果是第一次，或者外部频率发生了巨大跳变（超过 10 Hz），重新锁定底座频率！
+    static uint8_t sync_done = 0;
+    if (center_freq < 0.0 || fabs(coarse_freq - center_freq) > 10.0) {
+        center_freq = coarse_freq;
+        dpll_integral = 0.0; // 频率发生跳跃，清空过去的积分记忆
+        sync_done = 0;
+    }
+    
+    // 只要找到了过零点，就开始锁相！
+    if (first_up_idx >= 0.0) {
+        double dt_to_zc = first_up_idx / 200000.0; // 相对本块起点的物理时间
+        
+        // 基于 DWT 时间轴的绝对过零点相位映射！
+        double T_chunk = (double)length / 200000.0; // 本块严格采样的物理耗时
+        double blind_spot = dt - T_chunk;           // 算准：上一次中断结束，到本次采样开始，空过了多少盲区时间？
+        if (blind_spot < 0.0) blind_spot = 0.0;     // 硬件防抖
+        
+        // 我们需要知道，在过零点的这一瞬间，原本的软件 NCO 相位跑到了哪里？
+        double dt_to_zc_total = blind_spot + dt_to_zc;
+        double nco_phase_at_zc = software_nco_phase + 2.0 * DPLL_PI * actual_dac_freq * dt_to_zc_total;
+        nco_phase_at_zc = DSP_WrapPi(nco_phase_at_zc);
+        
+        // 5. 计算真正的物理相位误差 (只做测量，绝不强行覆写 NCO)
+        // 微调这个系统群延时参数（微秒），即可在示波器上实现完美的 0 度重合！
+        // 包括：ADC 采样转换延迟(约2us) + DAC 建立延迟(约1us) + 运放群延时
+        double hardware_delay_us = 1.5;
+        double target_shift_rad = 2.0 * DPLL_PI * actual_dac_freq * (hardware_delay_us / 1000000.0); 
+        
+        double phase_error_rad = DSP_WrapPi(target_shift_rad - nco_phase_at_zc);
+        double phase_error_cycles = phase_error_rad / (2.0 * DPLL_PI);
+        
+        debug_phase_error = (float)phase_error_cycles;
+        debug_measured_freq = (float)coarse_freq; // 恢复打印测量的外部频率
+        
+        // 6. 让 NCO 继续往前飞到本块结束，完成数学上的绝对连续
+        software_nco_phase = nco_phase_at_zc + 2.0 * DPLL_PI * actual_dac_freq * (T_chunk - dt_to_zc);
+        software_nco_phase = DSP_WrapPi(software_nco_phase);
+        
+        if (dpll_enable) {
+            dpll_integral += dpll_ki * phase_error_cycles;
+            if (dpll_integral > 1000.0) dpll_integral = 1000.0;
+            if (dpll_integral < -1000.0) dpll_integral = -1000.0;
+            debug_integral = (float)dpll_integral;
+            
+            // 7. PI 控制频率闭环 (让 NCO 追上外部信号)
+            double out_freq = center_freq + dpll_kp * phase_error_cycles + dpll_integral;
+            if (out_freq < 1.0) out_freq = 1.0; 
+            
+            // --- 核心绝杀：当软件完美锁死时，通知 DMA 中断进行精确的【硬件相位注入】 ---
+            static uint8_t stable_count = 0;
+            extern volatile double sync_target_phase_rad;
+            extern volatile uint32_t sync_target_dwt;
+            extern volatile uint8_t need_sync;
+            
+            if (!sync_done && fabs(phase_error_cycles) < 0.01) { // 误差小于 3.6 度
+                stable_count++;
+                if (stable_count > 10) { // 稳定 10 个块
+                    // 记录这一瞬间的绝对时间和绝对软件相位
+                    __disable_irq();
+                    sync_target_dwt = DWT->CYCCNT;
+                    sync_target_phase_rad = software_nco_phase + 2.0 * DPLL_PI * actual_dac_freq * ((double)(sync_target_dwt - adc_isr_dwt) / (double)SystemCoreClock);
+                    need_sync = 1;
+                    __enable_irq();
+                    
+                    sync_done = 1;
+                }
+            } else {
+                stable_count = 0;
+            }
+            
+            // 8. 写入硬件 DDS
+            uint32_t ftw = (uint32_t)((out_freq / 1000000.0) * 4294967296.0);
+            actual_dac_freq = (double)ftw * 1000000.0 / 4294967296.0;
+            
+            DDS_Set_Frequency(actual_dac_freq, 1000000.0);
+            debug_target_freq = (float)actual_dac_freq;
+        }
+    } else {
+        // 如果找不到过零点或频率离谱，只让 NCO 根据最后一次频率盲转跨越，保持生命
+        software_nco_phase += 2.0 * DPLL_PI * actual_dac_freq * dt;
+        software_nco_phase = DSP_WrapPi(software_nco_phase);
+    }
+    
+    // 重新开启下一次 One-Shot 采样 (如果你已经在 CubeMX 里把 DMA 改成了 Normal 模式，这就很关键了)
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUF_SIZE);
 }
+
+// --- ADC1 + DMA 回调 ---
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc) {
+    // One-Shot 模式下我们不处理半满中断
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+    if (hadc->Instance == ADC1) {
+        // 极其关键：一进中断立刻捕获物理时间！这抹除了所有的主循环延迟抖动！
+        adc_isr_dwt = DWT->CYCCNT;
+        adc_chunk_ready = 1;
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -115,9 +288,6 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
-  /* Configure the peripherals common clocks */
-  PeriphCommonClock_Config();
-
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -126,38 +296,42 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_DAC1_Init();
-  MX_TIM6_Init();
   MX_TIM7_Init();
   MX_USART1_UART_Init();
-  MX_TIM3_Init();
   MX_ADC1_Init();
   MX_TIM4_Init();
-  MX_ADC2_Init();
-  MX_TIM13_Init();
-  //MX_I2C1_Init();
-  MX_SPI1_Init();
-  MX_ADC3_Init();
-  //MX_I2C3_Init();
-  MX_SPI2_Init();
-  MX_TIM2_Init();
-  MX_TIM5_Init();
-  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  // 初始化 DWT 周期计数器 (提供纳秒级绝对物理时间基准)
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
   UART1_Receive_Start();
   CMD_Init();
-  FFT_Init();
 
-  /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
-  // AD9833_Init();
-  // AD9833_SetAmplitude(200);
-  // AD9833_SetPhase(PHASE_REG_0, 180.0f);
-  // AD9833_SetFixedOutput(10000, WAVE_SINE);
+  // ==========================================
+  // [阶段一] DDS 与 DAC 初始化
+  // ==========================================
+  DDS_Core_Init();
+  // 假设 TIM7 触发频率为 1MHz (需在 CubeMX 确保 TIM7 Update Event 为 1MHz)
+  DDS_Set_Frequency(debug_target_freq, 1000000.0); 
+  
+  // 启动 DAC1 CH2 DMA
+  HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)dds_buffer, DDS_BUF_SIZE, DAC_ALIGN_12B_R);
+  
+  // 启动 TIM7 以触发 DAC
+  extern TIM_HandleTypeDef htim7;
+  HAL_TIM_Base_Start(&htim7);
 
 
-  /* SI5351 Output Test */
-  // si5351_Init();
-  // si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
-
+  // ==========================================
+  // [阶段二] ADC 高速连续采样初始化
+  // ==========================================
+  // 启动 ADC1 DMA 循环采样 (需在 CubeMX 确保 TIM4 TRGO 为 200kHz 触发)
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUF_SIZE);
+  
+  // 启动 TIM4 以触发 ADC
+  extern TIM_HandleTypeDef htim4;
+  HAL_TIM_Base_Start(&htim4);
 
   /* USER CODE END 2 */
 
@@ -165,31 +339,38 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // 假设目标频率为 10kHz，TIM4 使用 psc=239, arr=9 产生 100kHz 采样率 (若定时器时钟为 240MHz)
-    float target_freq = 1000.0f;
-    float sample_rate = 100000.0f;
-    
-    // 采样 2048 个点
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(239, 9, 2000);
-    
-    if (res.ch1 && res.ch2) {
-        // 计算两路相位
-        float phase1 = Goertzel_Phase(res.ch1, res.length, target_freq, sample_rate);
-        float phase2 = Goertzel_Phase(res.ch2, res.length, target_freq, sample_rate);
-        
-        // 计算相位差
-        float phase_diff = phase1 - phase2;
-        
-        // 处理相位卷绕，限制在 -PI 到 +PI 之间
-        while(phase_diff > 3.14159265f)  phase_diff -= 2.0f * 3.14159265f;
-        while(phase_diff < -3.14159265f) phase_diff += 2.0f * 3.14159265f;
+      // --- 在 Debug 模式下动态响应参数修改 ---
+      static float last_freq = 0;
+      if (last_freq != debug_target_freq) {
+          // 如果你在 Keil/STM32CubeIDE 的 Live Watch 中修改了 debug_target_freq，这里会生效
+          DDS_Set_Frequency(debug_target_freq, 1000000.0); 
+          last_freq = debug_target_freq;
+      }
+      
+      // --- 阶段二波形打印测试 (可选) ---
+      // 在完成阶段一后，你可以用示波器验证 DAC 没问题，然后解开下面的注释来验证 ADC 是否正常采到了波形
 
-        float rad = phase_diff * 180 / 3.1415 ;
-        // 打印调试信息，可在串口助手观察
-        printf("P1: %.2f rad, P2: %.2f rad, Diff: %.2f rad\r\n", phase1, phase2, phase_diff);
-    }
-    
-    HAL_Delay(500); // 每0.5秒测一次，防止串口刷屏
+      static uint32_t last_print_time = 0;
+      if (HAL_GetTick() - last_print_time > 1000) {
+          last_print_time = HAL_GetTick();
+          
+          printf("\r\n=== Debug Info ===\r\n");
+          printf("ADC MAX: %d, MIN: %d, DC Offset: %d\r\n", adc_max, adc_min, dc_offset);
+          printf("Measured Freq: %.1f Hz\r\n", debug_measured_freq);
+          printf("Phase Error: %.4f Cycles, Integral: %.4f\r\n", debug_phase_error, debug_integral);
+          printf("DAC Out Freq: %.1f Hz\r\n", debug_target_freq);
+          
+          printf("--- ADC Buffer First 50 Points ---\r\n");
+      }
+      
+      if (adc_chunk_ready) {
+          adc_chunk_ready = 0;
+          Process_ADC_Chunk((uint16_t*)adc_buffer, ADC_BUF_SIZE, adc_isr_dwt);
+      }
+      
+      // 旧有架构的非阻塞轮询 (保留以确保串口屏指令等基础功能不挂掉)
+      // UART_Poll();
+      // CMD_Poll();
 
     /* USER CODE END WHILE */
 
@@ -251,32 +432,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-/**
-  * @brief Peripherals Common Clock Configuration
-  * @retval None
-  */
-void PeriphCommonClock_Config(void)
-{
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-
-  /** Initializes the peripherals clock
-  */
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInitStruct.PLL2.PLL2M = 2;
-  PeriphClkInitStruct.PLL2.PLL2N = 12;
-  PeriphClkInitStruct.PLL2.PLL2P = 2;
-  PeriphClkInitStruct.PLL2.PLL2Q = 2;
-  PeriphClkInitStruct.PLL2.PLL2R = 2;
-  PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_3;
-  PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOMEDIUM;
-  PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
-  PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }

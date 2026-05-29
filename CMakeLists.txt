@@ -46,8 +46,6 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
 
 
 )
@@ -71,7 +69,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task/DDS.c
         Core/Task/DDS.h
 
-        Core/Task/ADCTask.c
+        Core/Src/hybrid_dpll.c
+        Core/Src/dds_core.c
         Core/Task/ADCTask.h
 
         Core/Task/FFTTask.c
@@ -84,10 +83,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithm/lttb.h
         Core/Algorithm/protocol.c
         Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
-        Core/AD9833/ad9833_hal.c
-        Core/AD9833/ad9833_hal.h
 )
 
 
@@ -100,11 +95,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task
         Core/Inc
         Core/Algorithm
-        Core/AD9833
         Drivers/CMSIS/DSP/Include
         Drivers/CMSIS/Include
         Middlewares/ST/ARM/DSP/Inc
-    Core/si5351
 )
 
 # Add project symbols (macros)

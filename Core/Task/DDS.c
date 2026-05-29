@@ -28,7 +28,7 @@ void DDS_Init(void)
 
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
-    HAL_TIM_Base_Start(&htim6);
+    HAL_TIM_Base_Start(&htim7);
     HAL_TIM_Base_Start(&htim7);
 }
 
