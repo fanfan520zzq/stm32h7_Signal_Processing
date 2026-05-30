@@ -12,10 +12,10 @@ __attribute__((section(".dma_buffer"))) uint16_t adc_buffer[ADC_BUF_SIZE];
 
 // DPLL 可调参数（Live Watch 里直接改，立刻生效）
 uint8_t  dpll_enable        = 1;      // 0=开环(纯频率跟踪), 1=闭环锁相
-float    dpll_kp             = 4.80f; // 比例增益：越大收敛越快，过大会振荡
-float    dpll_ki             = 1.90f; // 积分增益：消除稳态频率偏差
+float    dpll_kp             = 3.80f; // 比例增益：越大收敛越快，过大会振荡
+float    dpll_ki             = 1.00f; // 积分增益：消除稳态频率偏差
 double   user_phase_shift_deg = 0.0;  // 用户手动相位偏移（度），正数=超前
-float    hardware_delay_us    = 4.4f; // 补偿纯模拟电路(低通滤波、运放)带来的物理延时
+float    hardware_delay_us    = 4.60f; // 补偿纯模拟电路(低通滤波、运放)带来的物理延时
 
 // DPLL 状态监视（只读，Live Watch / 串口打印用）
 double   g_measured_freq    = 0.0;  // 本块测得的输入频率 (Hz)
