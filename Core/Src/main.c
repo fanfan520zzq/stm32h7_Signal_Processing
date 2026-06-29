@@ -30,9 +30,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "DDS.h"
-#include "MSG.h"
-#include "si5351.h" // Include SI5351 driver
+#include "si5351.h"
 #include "ad9833_hal.h"
 #include "ADCTask.h"
 #include "Measure.h" // ADDED: include Measure for Goertzel functions
@@ -67,10 +65,8 @@ void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 extern void UART1_Receive_Start(void);
-extern void CMD_Init(void);
 extern void FFT_Init(void);
 extern void UART_Poll(void);
-extern void CMD_Poll(void);
 extern void ADC_Poll(void);
 extern void FFT_Poll(void);
 /* USER CODE END PFP */
@@ -144,7 +140,7 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
-  CMD_Init();
+  AD9833_Init();
   FFT_Init();
 
   /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
@@ -165,32 +161,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // 假设目标频率为 10kHz，TIM4 使用 psc=239, arr=9 产生 100kHz 采样率 (若定时器时钟为 240MHz)
-    float target_freq = 1000.0f;
-    float sample_rate = 100000.0f;
-    
-    // 采样 2048 个点
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(239, 9, 2000);
-    
-    if (res.ch1 && res.ch2) {
-        // 计算两路相位
-        float phase1 = Goertzel_Phase(res.ch1, res.length, target_freq, sample_rate);
-        float phase2 = Goertzel_Phase(res.ch2, res.length, target_freq, sample_rate);
-        
-        // 计算相位差
-        float phase_diff = phase1 - phase2;
-        
-        // 处理相位卷绕，限制在 -PI 到 +PI 之间
-        while(phase_diff > 3.14159265f)  phase_diff -= 2.0f * 3.14159265f;
-        while(phase_diff < -3.14159265f) phase_diff += 2.0f * 3.14159265f;
-
-        float rad = phase_diff * 180 / 3.1415 ;
-        // 打印调试信息，可在串口助手观察
-        printf("P1: %.2f rad, P2: %.2f rad, Diff: %.2f rad\r\n", phase1, phase2, phase_diff);
-    }
-    
-    HAL_Delay(500); // 每0.5秒测一次，防止串口刷屏
-
+    UART_Poll();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

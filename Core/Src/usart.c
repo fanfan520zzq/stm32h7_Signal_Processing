@@ -304,9 +304,6 @@ void UART1_Receive_Start(void) {
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
   if (huart->Instance == USART1) {
-    // Invalidate DCache
-    SCB_InvalidateDCache_by_Addr((uint32_t*)uart_rx_buf, UART_RX_BUF_SIZE);
-
     // Copy received bytes to software ring buffer
     for (uint16_t i = 0; i < Size; i++) {
         uint16_t next_head = (ring_head + 1) % RING_BUF_SIZE;
