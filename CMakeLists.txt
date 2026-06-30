@@ -42,7 +42,6 @@ set(DSP_LIB_FILE "${CMAKE_SOURCE_DIR}/Middlewares/ST/ARM/DSP/Lib/libarm_cortexM7
 add_executable(${CMAKE_PROJECT_NAME}
         Core/Task/LCD.c
         Core/Algorithm/lttb.c
-        Core/si5351/si5351.c
 )
 
 # Add STM32CubeMX generated sources
@@ -61,6 +60,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task/ADCTask.c
         Core/Task/FFTTask.c
         Core/AD9833/ad9833_hal.c
+        Core/Src/adc_sync.c
+        Core/Src/sweep_grid.c
+        Core/Src/sweep_engine.c
+        Core/Src/goertzel.c
+        Core/Src/calib.c
+        Core/Src/hooks.c
 )
 
 
@@ -82,6 +87,13 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+)
+
+# 把"缺函数原型"类问题升级为编译错误, 从源头堵死硬浮点 ABI 传参错位的隐患.
+# 只作用于本工程自己的源文件(不含 stm32cubemx 子目录的 HAL/CMSIS).
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -Werror=implicit-function-declaration
+    -Werror=implicit-int
 )
 
 

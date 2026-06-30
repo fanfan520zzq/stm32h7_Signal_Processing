@@ -56,6 +56,11 @@ ADC_DualResult_t ADC_SampleOnce_TIM4(uint32_t psc, uint32_t arr, uint32_t length
     __HAL_TIM_SET_PRESCALER(&htim4, psc);
     __HAL_TIM_SET_AUTORELOAD(&htim4, arr);
     __HAL_TIM_SET_COUNTER(&htim4, 0);
+    // PSC 是缓冲寄存器, 改值要等下一个更新事件才生效. 这里强制产生一次更新事件
+    // (UG) 把新的 psc/arr 立即载入有效寄存器, 否则首个采样周期仍用旧分频(psc=239),
+    // 整窗时序错乱. ADC 此时尚未启动, UG 触发的 TRGO 无害, 之后清掉更新标志.
+    htim4.Instance->EGR = TIM_EGR_UG;
+    __HAL_TIM_CLEAR_FLAG(&htim4, TIM_FLAG_UPDATE);
 
     Start_Sample();
 

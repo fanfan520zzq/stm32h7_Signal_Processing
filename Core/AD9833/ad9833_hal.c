@@ -46,6 +46,19 @@ void AD9833_SetAmplitude(uint8_t amp)
     AD9833_AmpSet(amp);
 }
 
+void AD9833_SetPhase(AD9833_PhaseReg reg, float phase_deg)
+{
+    if (phase_deg < 0.0f) phase_deg = 0.0f;
+    if (phase_deg >= 360.0f) phase_deg = fmodf(phase_deg, 360.0f);
+
+    uint16_t phase_word = (uint16_t)((phase_deg * 4096.0f) / 360.0f) & 0x0FFF;
+    if (reg == PHASE_REG_0) {
+        AD9833_Write16(0xC000 | phase_word);
+    } else {
+        AD9833_Write16(0xE000 | phase_word);
+    }
+}
+
 /* ---- 频率设定: FreqReg = (Fout * 2^28) / MCLK ---- */
 void AD9833_SetFrequency(AD9833_FreqReg reg, uint32_t freq)
 {
@@ -80,19 +93,6 @@ void AD9833_SetFixedOutput(uint32_t freq, AD9833_WaveType wave)
     AD9833_Write16(0x2100);
     AD9833_SetFrequency(FREQ_REG_0, freq);
     AD9833_SetWaveform(wave);
-}
-
-void AD9833_SetPhase(AD9833_PhaseReg reg, float phase_deg)
-{
-    if (phase_deg < 0.0f) phase_deg = 0.0f;
-    if (phase_deg >= 360.0f) phase_deg = fmodf(phase_deg, 360.0f);
-
-    uint16_t phase_word = (uint16_t)((phase_deg * 4096.0f) / 360.0f) & 0x0FFF;
-    if (reg == PHASE_REG_0) {
-        AD9833_Write16(0xC000 | phase_word);
-    } else {
-        AD9833_Write16(0xE000 | phase_word);
-    }
 }
 
 /* ---- 非阻塞扫频: 启动 ---- */

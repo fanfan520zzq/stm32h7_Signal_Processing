@@ -45,8 +45,8 @@ void AD9833_SetWaveform(AD9833_WaveType wave);
 
 void AD9833_AmpSet(uint8_t amp);
 void AD9833_SetAmplitude(uint8_t amp);
-void AD9833_SetFixedOutput(uint32_t freq, AD9833_WaveType wave);
 void AD9833_SetPhase(AD9833_PhaseReg reg, float phase_deg);
+void AD9833_SetFixedOutput(uint32_t freq, AD9833_WaveType wave);
 
 void AD9833_SweepStart(uint32_t start_f, uint32_t end_f, uint32_t step_f, uint32_t step_ms);
 void AD9833_SweepStop(void);

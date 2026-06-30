@@ -19,9 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "dac.h"
 #include "dma.h"
-#include "i2c.h"
 #include "memorymap.h"
 #include "spi.h"
 #include "tim.h"
@@ -34,6 +32,11 @@
 #include "ad9833_hal.h"
 #include "ADCTask.h"
 #include "Measure.h" // ADDED: include Measure for Goertzel functions
+#include "sweep_engine.h"
+#include "sweep_grid.h"
+#include "adc_sync.h"
+#include "calib.h"
+#include "config.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -83,6 +86,159 @@ void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
         }
     }
 }
+
+#ifdef DEBUG_SWEEP
+/* ============================================================
+ *  分模块板上自检. 烧录后看串口 (UART1, 115200 默认).
+ *  改 main.c 顶部的 DEBUG_STAGE 选模块, 每个模块的验收标准见注释.
+ * ============================================================ */
+void Sweep_DebugSelfTest(void)
+{
+    /* ---- 模块 0: 钉死时钟常量 ----
+     * 验收: 打印的 TIM_ker / ADC_ker 要和 config.h 里的
+     *       TIM_KER_CLK_HZ / ADC_KER_CLK_HZ 一致, 不一致就改 config.h. */
+#if (DEBUG_STAGE == 0)
+    uint32_t pclk1   = HAL_RCC_GetPCLK1Freq();
+    /* TIM4 在 APB1, APB1 分频!=1 时定时器内核 = PCLK1*2 */
+    uint32_t tim_ker = pclk1 * 2u;
+    uint32_t adc_ker = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_ADC);
+    printf("=== STAGE0 clock check ===\r\n");
+    printf("SYSCLK   = %lu\r\n", (unsigned long)HAL_RCC_GetSysClockFreq());
+    printf("HCLK     = %lu\r\n", (unsigned long)HAL_RCC_GetHCLKFreq());
+    printf("PCLK1    = %lu\r\n", (unsigned long)pclk1);
+    printf("TIM4_ker = %lu  (config TIM_KER_CLK_HZ=%.0f)\r\n",
+           (unsigned long)tim_ker, (double)TIM_KER_CLK_HZ);
+    printf("ADC_ker  = %lu  (config ADC_KER_CLK_HZ=%.0f)\r\n",
+           (unsigned long)adc_ker, (double)ADC_KER_CLK_HZ);
+    HAL_Delay(1000);
+
+    /* ---- 模块 1: DDS 设频 ----
+     * 验收: 示波器/频率计量 AD9833 输出, 每 2s 切一个频点, 频率要准. */
+#elif (DEBUG_STAGE == 1)
+    /* 跳频确认全频段: 每 2s 切一点, 示波器对照频率是否准. */
+    static const float test_f[] = {1000.0f, 10000.0f, 100000.0f, 500000.0f};
+    static int idx = 0;
+    static int first = 1;
+    if (first) {
+        AD9833_SetAmplitude(200);   // 数字电位器幅度 (0..255)
+        first = 0;
+    }
+    dds_set_frequency(test_f[idx]);
+    printf("=== STAGE1 dds_set_frequency(%.0f) -> scope AD9833 out ===\r\n", test_f[idx]);
+    idx = (idx + 1) % 4;
+    HAL_Delay(2000);
+
+    /* ---- 模块 2: 采样率 (DWT 周期计数器直接实测 Fs, 用普通串口助手看) ----
+     * 不靠肉眼数点: 用 CPU 周期计数器测采 N 个点的耗时, Fs = N / t.
+     * psc=0 arr=99 期望 Fs = TIM_ker/100 = 240MHz/100 = 2.4MHz.
+     * 若实测 ≈1.2MHz, 说明 TIM4 实际内核是 120MHz, 要改 config.h 的 TIM_KER_CLK_HZ. */
+#elif (DEBUG_STAGE == 2)
+    {
+        /* 使能 DWT 周期计数器 */
+        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+        static const uint32_t arr_list[] = {49, 99, 199, 399, 799};
+        uint32_t N = 1000;
+        printf("=== STAGE2 Fs vs arr (psc=0, N=%lu) ===\r\n", (unsigned long)N);
+        printf("若 Fs 随 arr 减半而翻倍 -> 定时器主导(看真实 TIM_ker); 若卡住不变 -> ADC 上限\r\n");
+        for (int k = 0; k < 5; k++) {
+            uint32_t arr = arr_list[k];
+            DWT->CYCCNT = 0;
+            ADC_SampleOnce_TIM4(0, arr, N);
+            uint32_t cyc = DWT->CYCCNT;
+            float fs = (float)N * (float)SystemCoreClock / (float)cyc;
+            printf("arr=%-4lu Fs=%-9.0f | 期望(240M)=%-9.0f (120M)=%-9.0f\r\n",
+                   (unsigned long)arr, fs,
+                   240000000.0f / (arr + 1), 120000000.0f / (arr + 1));
+        }
+    }
+    HAL_Delay(3000);
+
+    /* ---- 模块 3: 相干(欠)采样验证 (外部信号发生器) ----
+     * 接线: 信号发生器 -> ADC CH1(PC4) 和 CH2(PB1) 同一信号(并联同源).
+     *       发生器频率设成 config.h 里的 STAGE3_FGEN, 带直流偏置落在 0~3.3V.
+     * 引擎不驱动 AD9833(g_dds_external=1), 只按 STAGE3_FGEN 相干测量, 反复打印.
+     * 验收: |H|≈1.00, phase≈0deg. STAGE3_FGEN=1MHz 时打印应是 p=1 UNDER(欠采样),
+     *       仍 |H|≈1 phase≈0 -> 欠采样链路成立, 能测 1MHz. */
+#elif (DEBUG_STAGE == 3)
+    {
+        static int first = 1;
+        if (first) {
+            g_dds_external = 1;   // 外部源, 引擎只测不发
+            first = 0;
+            printf("=== STAGE3 外部源: 发生器设 %.0f Hz, 接 CH1+CH2 ===\r\n",
+                   (double)STAGE3_FGEN);
+        }
+        sweep_engine_init();
+        sweep_measure_point(STAGE3_FGEN);
+        // [pt] 行是校准前(raw); 这里打印校准后, 同源应被拉回 ~0:
+        if (g_Htable_len > 0)
+            printf("  --> 校准后 phase = %.3f deg (同源应 ~0; 若~-1.9° 则符号反了)\r\n",
+                   g_Htable[g_Htable_len-1].H_phase * 57.29578f);
+    }
+    HAL_Delay(2000);
+
+    /* ---- 模块 4: 直通校准验证 ----
+     * 接线: AD9833 输出 -> ADC CH1+CH2 同源(经 tee/分接). 引擎驱动 AD9833 扫描.
+     * 跑一遍 thru-cal 记每点 H_thru(增益失配 + ~2.6ns 偏斜), 打印校准表;
+     * 然后带校准重测几个点, 相位应被拉回 ~0(对比 [pt] 行的原始相位). */
+#elif (DEBUG_STAGE == 4)
+    {
+        static const float chk[] = {10000.0f, 100000.0f, 1000000.0f};
+        g_dds_external = 1;                 // 标明使用外部扫描源
+        printf("=== STAGE4 thru-cal: 手动外部DDS 接 CH1+CH2 ===\r\n");
+        cal_clear();
+        
+        cal_run_thru_manual(chk, 3);        // 调用专门的手动校准函数 (带串口等待)
+        
+        cal_print_table();
+        printf("--- 校准后重测 (phase 应被拉回 ~0) ---\r\n");
+        sweep_engine_init();
+        
+        for (int i = 0; i < 3; i++) {
+            printf("\r\n>> [手动干预] 请再次将外部仪器频率设置为 %.0f Hz\r\n", chk[i]);
+            printf(">> 准备好后，发送小写字母 'y' 测距...\r\n");
+            uint8_t rx = 0;
+            while (rx != 'y' && rx != 'Y') {
+                HAL_UART_Receive(&huart1, &rx, 1, HAL_MAX_DELAY);
+            }
+            sweep_measure_point(chk[i]);
+        }
+        
+        for (int i = 0; i < g_Htable_len; i++)
+            printf("  CAL f=%.0f |H|=%.4f phase=%.3fdeg\r\n",
+                   g_Htable[i].f_actual, g_Htable[i].H_mag,
+                   g_Htable[i].H_phase * 57.29578f);
+    }
+    while (1) { HAL_Delay(1000); }   // 跑一次即可
+
+    /* ---- 模块 5: 直通校准 + 整段扫频 (画 Bode) ----
+     * 流程: ①AD9833 直接接 CH1+CH2 做 thru-cal -> ②接入 DUT 扫频(带校准).
+     *   thru:    AD9833 -> CH1 和 CH2 (旁路 DUT)
+     *   measure: AD9833 -> DUT -> CH2,  AD9833 -> CH1 (参考)
+     * 跑完打印校准后的 H 表 CSV, 拷电脑画 Bode. */
+#elif (DEBUG_STAGE == 5)
+    AD9833_SetAmplitude(200);
+    g_dds_external = 0;                       // AD9833 作扫描源
+    printf("=== STAGE5 (硬编码免校准版) ===\r\n");
+
+
+    sweep_engine_run(100.0f, 1000000.0f);     // 100Hz..1MHz, 已带硬编码校准
+    
+    printf("\r\n=== 滤波器扫频结束，CSV 数据如下 ===\r\n");
+    printf("f_actual,H_mag,H_phase_deg,res,settled\r\n");
+    for (int i = 0; i < g_Htable_len; i++) {
+        printf("%.2f,%.5f,%.3f,%d,%d\r\n",
+               g_Htable[i].f_actual, g_Htable[i].H_mag,
+               g_Htable[i].H_phase * 57.29578f,
+               g_Htable[i].resolution, g_Htable[i].settled);
+    }
+    printf("=== sweep done, %d points ===\r\n", g_Htable_len);
+    while (1) { HAL_Delay(1000); }   // 跑一次即可, 停在这
+#endif
+}
+#endif /* DEBUG_SWEEP */
 /* USER CODE END 0 */
 
 /**
@@ -121,33 +277,29 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_DAC1_Init();
-  MX_TIM6_Init();
-  MX_TIM7_Init();
   MX_USART1_UART_Init();
-  MX_TIM3_Init();
   MX_ADC1_Init();
   MX_TIM4_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
-  //MX_I2C1_Init();
   MX_SPI1_Init();
-  MX_ADC3_Init();
-  //MX_I2C3_Init();
-  MX_SPI2_Init();
-  MX_TIM2_Init();
   MX_TIM5_Init();
-  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
   AD9833_Init();
   FFT_Init();
+
+#ifdef DEBUG_SWEEP
+  adc_sync_init();        // ADC 校准 (模块2/3/5 需要)
+  sweep_engine_init();
+#endif
 
   /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
   // AD9833_Init();
   // AD9833_SetAmplitude(200);
   // AD9833_SetPhase(PHASE_REG_0, 180.0f);
   // AD9833_SetFixedOutput(10000, WAVE_SINE);
+  // int k=1;
 
 
   /* SI5351 Output Test */
@@ -161,7 +313,34 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+#ifdef DEBUG_SWEEP
+    Sweep_DebugSelfTest();
+#elif (DEBUG_STAGE == 6)
+    printf("=== STAGE 6: 快速查验 ADC 引脚 (PC4 与 PB0) ===\r\n");
+    printf("请用手触摸引脚，或接 3.3V / GND，观察对应数值变化 (0~4095)\r\n");
+    
+    adc_sync_init();
+    
+    // 强制开启 TIM4，以大概 10kHz 频率触发 ADC
+    extern TIM_HandleTypeDef htim4;
+    __HAL_TIM_SET_PRESCALER(&htim4, 0);
+    __HAL_TIM_SET_AUTORELOAD(&htim4, 24000 - 1); 
+    HAL_TIM_Base_Start(&htim4);
+
+    while (1) {
+        uint16_t c1[10], c2[10];
+        
+        // acq_get_window 内部会触发 ADC 采集并阻塞等待完成
+        acq_get_window(c1, c2, 10);
+        
+        // 取第一个采样点的值打印即可，足够判断高低电平
+        printf("PC4(理应是CH1) = %4d   |   PB0(理应是CH2) = %4d\r\n", c1[0], c2[0]);
+        HAL_Delay(200); // 1秒打印 5 次，方便肉眼看
+    }
+
+#else
     UART_Poll();
+#endif
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
