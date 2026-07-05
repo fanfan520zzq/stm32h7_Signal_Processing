@@ -100,7 +100,7 @@ int recon_analyze_block(const uint16_t *buf, uint32_t len, float fs_hz, ReconAna
 
     for (uint8_t k = 1; k <= RECON_MAX_HARMONICS; k++) {
         float hf = f0 * (float)k;
-        if (hf > 50000.0f || hf >= fs_hz * 0.45f) {
+        if (hf > 50050.0f || hf >= fs_hz * 0.45f) {
             break;
         }
 
