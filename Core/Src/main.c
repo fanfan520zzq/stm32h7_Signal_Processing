@@ -86,10 +86,12 @@ extern void FFT_Poll(void);
 /* USER CODE BEGIN 0 */
 #define RECON_ADC_FAST_FS_HZ 1200000.0f
 #define RECON_ADC_LOW_FS_HZ   200000.0f
+#define RECON_AUTO_REBUILD_CONFIRM 3u
 
 static ReconAnalysis s_last_recon_analysis;
 static uint8_t s_last_recon_valid = 0u;
 static uint8_t s_last_recon_used = 0u;
+static uint8_t s_recon_auto_change_count = 0u;
 
 void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
     ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
@@ -231,6 +233,96 @@ static void Recon_PrintDebugChain(const ReconAnalysis *analysis, uint8_t used)
     printf("=== RECON_DEBUG_END ===\r\n");
 }
 
+static int Recon_HarmonicRatio(const ReconAnalysis *analysis, uint8_t k, float *ratio)
+{
+    if (analysis == 0 || ratio == 0 || analysis->input_vpp <= 0.001f) {
+        return 0;
+    }
+
+    for (uint8_t i = 0; i < analysis->harmonic_count; i++) {
+        const ReconHarmonic *h = &analysis->harmonic[i];
+        if (h->valid && h->k == k) {
+            *ratio = h->mag_vpp / analysis->input_vpp;
+            return 1;
+        }
+    }
+
+    *ratio = 0.0f;
+    return 1;
+}
+
+static const char *Recon_InputChangeReason(const ReconAnalysis *now)
+{
+    if (now == 0 || !now->valid) {
+        return 0;
+    }
+    if (!s_last_recon_valid || !s_last_recon_analysis.valid) {
+        return "first_valid";
+    }
+
+    float df = fabsf(now->f0_hz - s_last_recon_analysis.f0_hz);
+    float freq_limit = s_last_recon_analysis.f0_hz * 0.002f;
+    if (freq_limit < 8.0f) {
+        freq_limit = 8.0f;
+    }
+    if (df > freq_limit) {
+        return "freq";
+    }
+
+    float old_vpp = s_last_recon_analysis.input_vpp;
+    if (old_vpp > 0.02f) {
+        float dv = fabsf(now->input_vpp - old_vpp) / old_vpp;
+        if (dv > 0.12f) {
+            return "amp";
+        }
+    }
+
+    for (uint8_t k = 2u; k <= 7u; k++) {
+        float r_now = 0.0f;
+        float r_old = 0.0f;
+        if (!Recon_HarmonicRatio(now, k, &r_now) ||
+            !Recon_HarmonicRatio(&s_last_recon_analysis, k, &r_old)) {
+            continue;
+        }
+        if (fabsf(r_now - r_old) > 0.06f) {
+            return "harm";
+        }
+    }
+
+    return 0;
+}
+
+static int Recon_LoadCurrent(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
+                             uint32_t *relock_count, double *center_f0,
+                             double kp, double ki, const char *done_tag)
+{
+    ReconAnalysis analysis;
+    uint8_t used = 0u;
+
+    if (!Recon_BuildCurrent(lut, &analysis, &used)) {
+        return 0;
+    }
+
+    recon_dds_load_lut(lut, RECON_TABLE_LEN);
+    recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, kp, ki);
+    recon_dds_start(analysis.f0_hz);
+    if (last_tick) {
+        *last_tick = DWT->CYCCNT;
+    }
+    if (center_f0) {
+        *center_f0 = analysis.f0_hz;
+    }
+    if (relock_count) {
+        *relock_count = 0u;
+    }
+    s_recon_auto_change_count = 0u;
+    Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
+    if (done_tag) {
+        printf("%s f0=%.2f used=%u\r\n", done_tag, (double)analysis.f0_hz, (unsigned)used);
+    }
+    return 1;
+}
+
 static void FullChain_PrintHTable(void)
 {
     printf("\r\n=== H_TABLE_BEGIN ===\r\n");
@@ -266,27 +358,14 @@ static void Recon_EnableDwt(void)
 
 static int Recon_StartPllFromCurrentInput(uint16_t *lut, ReconPll *pll, uint32_t *last_tick)
 {
-    ReconAnalysis analysis;
-    uint8_t used = 0u;
-
     recon_dds_init();
-    if (!Recon_BuildCurrent(lut, &analysis, &used)) {
-        return 0;
-    }
-
-    recon_dds_load_lut(lut, RECON_TABLE_LEN);
-    recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.53, 0.05);
-    recon_dds_start(analysis.f0_hz);
-    *last_tick = DWT->CYCCNT;
-    Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
-    return 1;
+    return Recon_LoadCurrent(lut, pll, last_tick, 0, 0, 0.53, 0.05, 0);
 }
 
 static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
                              uint32_t *relock_count, double *center_f0)
 {
     ReconAnalysis analysis;
-    uint8_t used = 0u;
 
     extern volatile uint8_t g_recon_rebuild_request;
     extern volatile uint8_t g_recon_debug_request;
@@ -301,17 +380,8 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     if (g_recon_rebuild_request) {
         g_recon_rebuild_request = 0u;
         printf("=== RECON_REBUILD_START ===\r\n");
-        if (Recon_BuildCurrent(lut, &analysis, &used)) {
-            recon_dds_load_lut(lut, RECON_TABLE_LEN);
-            recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.53, 0.05);
-            recon_dds_start(analysis.f0_hz);
-            *last_tick = DWT->CYCCNT;
-            *center_f0 = analysis.f0_hz;
-            *relock_count = 0u;
-            Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
-            printf("=== RECON_REBUILD_DONE f0=%.2f used=%u ===\r\n",
-                   (double)analysis.f0_hz, (unsigned)used);
-        } else {
+        if (!Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.53, 0.05,
+                               "=== RECON_REBUILD_DONE")) {
             printf("=== RECON_REBUILD_FAILED ===\r\n");
         }
         HAL_Delay(50);
@@ -320,8 +390,26 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
 
     if (!Recon_Capture(&analysis)) {
         printf("RECON_WAIT input_invalid\r\n");
+        s_recon_auto_change_count = 0u;
         HAL_Delay(50);
         return;
+    }
+
+    const char *change_reason = Recon_InputChangeReason(&analysis);
+    if (change_reason != 0) {
+        s_recon_auto_change_count++;
+        if (s_recon_auto_change_count >= RECON_AUTO_REBUILD_CONFIRM) {
+            printf("=== RECON_AUTO_REBUILD_START reason=%s f0=%.2f ===\r\n",
+                   change_reason, (double)analysis.f0_hz);
+            if (!Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.53, 0.05,
+                                   "=== RECON_AUTO_REBUILD_DONE")) {
+                printf("=== RECON_AUTO_REBUILD_FAILED ===\r\n");
+            }
+            HAL_Delay(50);
+            return;
+        }
+    } else {
+        s_recon_auto_change_count = 0u;
     }
 
     extern volatile uint32_t g_adc_start_dwt;
@@ -340,13 +428,7 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
 
     if (*relock_count >= 50u) {
         printf("RECON PLL relock\r\n");
-        if (Recon_BuildCurrent(lut, &analysis, &used)) {
-            recon_dds_load_lut(lut, RECON_TABLE_LEN);
-            recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.5, 0.02);
-            recon_dds_start(analysis.f0_hz);
-            *center_f0 = analysis.f0_hz;
-            *relock_count = 0u;
-        }
+        (void)Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.5, 0.02, 0);
         HAL_Delay(50);
         return;
     }
