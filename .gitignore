@@ -13,6 +13,7 @@ compile_commands.json
 # IDEs
 .idea/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 
@@ -30,6 +31,12 @@ compile_commands.json
 *.bin
 *.map
 *.su
+__pycache__/
+*.py[cod]
+
+# Local generated plots / analysis artifacts
+Bode_Result.png
+BodePlot_Tools/*_Result.png
 
 # STM32CubeMX
 .mxproject
