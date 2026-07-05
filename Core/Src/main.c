@@ -609,8 +609,7 @@ void Sweep_DebugSelfTest(void)
             sweep_engine_run(100.0f, 1000000.0f);
             FullChain_PrintHTable();
             FullChain_PrintFilterAnalysis();
-            AD9833_SweepStop();
-            AD9833_SetAmplitude(0);
+            AD9833_OutputDisable();
             printf("=== RECON_START ===\r\n");
             Recon_EnableDwt();
             state = FULLCHAIN_RECON_INIT;

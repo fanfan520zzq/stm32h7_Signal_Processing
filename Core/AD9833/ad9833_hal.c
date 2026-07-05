@@ -95,6 +95,14 @@ void AD9833_SetFixedOutput(uint32_t freq, AD9833_WaveType wave)
     AD9833_SetWaveform(wave);
 }
 
+void AD9833_OutputDisable(void)
+{
+    sweepConfig.active = 0;
+    AD9833_AmpSet(0);
+    /* B28 | RESET | SLEEP1 | SLEEP12: stop MCLK/DAC path and hold output quiet. */
+    AD9833_Write16(0x21C0);
+}
+
 /* ---- 非阻塞扫频: 启动 ---- */
 void AD9833_SweepStart(uint32_t start_f, uint32_t end_f,
                        uint32_t step_f, uint32_t step_ms)
