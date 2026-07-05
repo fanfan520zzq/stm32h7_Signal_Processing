@@ -11,12 +11,13 @@ static char    s_line[LINE_BUF_SIZE];
 static uint8_t s_len = 0;
 
 volatile uint8_t g_recon_rebuild_request = 0;
+volatile uint8_t g_recon_debug_request = 0;
 
 static void parse_line(void)
 {
     uint32_t freq     = 0;
     uint8_t  amp      = 0;
-    uint8_t  has_freq = 0, has_amp = 0, has_recon = 0;
+    uint8_t  has_freq = 0, has_amp = 0, has_recon = 0, has_debug = 0;
 
     for (uint8_t i = 0; i < s_len; i++) {
         char c = s_line[i];
@@ -28,6 +29,8 @@ static void parse_line(void)
             has_amp = 1;
         } else if (c == 'R' || c == 'r') {
             has_recon = 1;
+        } else if (c == 'D' || c == 'd') {
+            has_debug = 1;
         }
     }
 
@@ -43,8 +46,12 @@ static void parse_line(void)
         g_recon_rebuild_request = 1u;
         printf("RECON_REBUILD_REQUEST\r\n");
     }
-    if (!has_freq && !has_amp && !has_recon) {
-        printf("ERR: use F<hz> A<0-255> R\r\n");
+    if (has_debug) {
+        g_recon_debug_request = 1u;
+        printf("RECON_DEBUG_REQUEST\r\n");
+    }
+    if (!has_freq && !has_amp && !has_recon && !has_debug) {
+        printf("ERR: use F<hz> A<0-255> R D\r\n");
     }
 }
 

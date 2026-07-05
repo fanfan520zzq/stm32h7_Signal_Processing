@@ -44,6 +44,7 @@
 #include "recon_synth.h"
 #include "recon_dds.h"
 #include "recon_pll.h"
+#include "recon_hlookup.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -83,6 +84,13 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define RECON_ADC_FAST_FS_HZ 1200000.0f
+#define RECON_ADC_LOW_FS_HZ   200000.0f
+
+static ReconAnalysis s_last_recon_analysis;
+static uint8_t s_last_recon_valid = 0u;
+static uint8_t s_last_recon_used = 0u;
+
 void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
     ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
     if (res.ch1 && res.ch2) {
@@ -94,18 +102,37 @@ void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
     }
 }
 
-static int Recon_Capture(ReconAnalysis *analysis)
+static int Recon_CaptureAt(uint32_t psc, uint32_t arr, float fs_hz, ReconAnalysis *analysis)
 {
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(0, 199, LEN);
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, LEN);
     if (!res.ch1 || res.length == 0u) {
         printf("RECON capture failed\r\n");
         return 0;
     }
-    if (!recon_analyze_block(res.ch1, res.length, RECON_ADC_FS_HZ, analysis)) {
-        printf("RECON analyze failed: check PC4 input, offset, amplitude, freq 1k..50k\r\n");
+    if (!recon_analyze_block(res.ch1, res.length, fs_hz, analysis)) {
         return 0;
     }
     return 1;
+}
+
+static int Recon_Capture(ReconAnalysis *analysis)
+{
+    if (Recon_CaptureAt(0, 199, RECON_ADC_FAST_FS_HZ, analysis)) {
+        if (analysis->f0_hz < 3000.0f) {
+            ReconAnalysis low;
+            if (Recon_CaptureAt(0, 1199, RECON_ADC_LOW_FS_HZ, &low)) {
+                *analysis = low;
+            }
+        }
+        return 1;
+    }
+
+    if (Recon_CaptureAt(0, 1199, RECON_ADC_LOW_FS_HZ, analysis)) {
+        return 1;
+    }
+
+    printf("RECON analyze failed: check PC4 input, offset, amplitude, freq 1k..50k\r\n");
+    return 0;
 }
 
 static void Recon_EnsureUnityHTable(void)
@@ -133,6 +160,9 @@ static int Recon_BuildCurrent(uint16_t *lut, ReconAnalysis *analysis, uint8_t *u
         printf("RECON synth failed\r\n");
         return 0;
     }
+    s_last_recon_analysis = *analysis;
+    s_last_recon_valid = 1u;
+    s_last_recon_used = (used != 0) ? *used : 0u;
     return 1;
 }
 
@@ -147,6 +177,58 @@ static void Recon_PrintLutStats(const uint16_t *lut, uint32_t len, uint8_t used)
     printf("RECON LUT used=%u min=%u max=%u vpp_code=%u first=%u,%u,%u,%u,%u,%u,%u,%u\r\n",
            (unsigned)used, minv, maxv, (unsigned)(maxv - minv),
            lut[0], lut[1], lut[2], lut[3], lut[4], lut[5], lut[6], lut[7]);
+}
+
+static void Recon_PrintDebugChain(const ReconAnalysis *analysis, uint8_t used)
+{
+    if (analysis == 0 || !analysis->valid) {
+        printf("RECON_DEBUG no_valid_analysis; send R after applying input\r\n");
+        return;
+    }
+
+    printf("=== RECON_DEBUG_BEGIN ===\r\n");
+    printf("f0=%.2f,input_vpp=%.5f,dc=%.1f,harmonics=%u,used=%u,H_points=%d\r\n",
+           (double)analysis->f0_hz,
+           (double)analysis->input_vpp,
+           (double)analysis->dc_code,
+           (unsigned)analysis->harmonic_count,
+           (unsigned)used,
+           g_Htable_len);
+    printf("k,fin_hz,x_vpp,x_phase_deg,H_mag,H_phase_deg,y_vpp,y_phase_deg\r\n");
+
+    for (uint8_t i = 0; i < analysis->harmonic_count; i++) {
+        const ReconHarmonic *x = &analysis->harmonic[i];
+        if (!x->valid) {
+            continue;
+        }
+
+        ReconHPoint hp;
+        if (!recon_hlookup(x->freq_hz, &hp)) {
+            printf("%u,%.2f,%.5f,%.2f,NA,NA,NA,NA\r\n",
+                   (unsigned)x->k,
+                   (double)x->freq_hz,
+                   (double)x->mag_vpp,
+                   (double)(x->phase_rad * 57.29578f));
+            continue;
+        }
+
+        double rel_phase = (double)x->phase_rad -
+                           (double)x->k * (double)analysis->fundamental_phase_rad;
+        double y_phase = recon_wrap_pi(rel_phase + (double)hp.phase_rad);
+        double y_vpp = (double)x->mag_vpp * (double)hp.mag;
+
+        printf("%u,%.2f,%.5f,%.2f,%.5f,%.2f,%.5f,%.2f\r\n",
+               (unsigned)x->k,
+               (double)x->freq_hz,
+               (double)x->mag_vpp,
+               (double)(x->phase_rad * 57.29578f),
+               (double)hp.mag,
+               (double)(hp.phase_rad * 57.29578f),
+               y_vpp,
+               y_phase * 57.29578);
+    }
+
+    printf("=== RECON_DEBUG_END ===\r\n");
 }
 
 static void FullChain_PrintHTable(void)
@@ -207,7 +289,15 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     uint8_t used = 0u;
 
     extern volatile uint8_t g_recon_rebuild_request;
+    extern volatile uint8_t g_recon_debug_request;
     UART_Poll();
+    if (g_recon_debug_request) {
+        g_recon_debug_request = 0u;
+        Recon_PrintDebugChain(s_last_recon_valid ? &s_last_recon_analysis : 0, s_last_recon_used);
+        HAL_Delay(20);
+        return;
+    }
+
     if (g_recon_rebuild_request) {
         g_recon_rebuild_request = 0u;
         printf("=== RECON_REBUILD_START ===\r\n");
