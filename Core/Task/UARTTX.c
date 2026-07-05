@@ -10,11 +10,13 @@
 static char    s_line[LINE_BUF_SIZE];
 static uint8_t s_len = 0;
 
+volatile uint8_t g_recon_rebuild_request = 0;
+
 static void parse_line(void)
 {
     uint32_t freq     = 0;
     uint8_t  amp      = 0;
-    uint8_t  has_freq = 0, has_amp = 0;
+    uint8_t  has_freq = 0, has_amp = 0, has_recon = 0;
 
     for (uint8_t i = 0; i < s_len; i++) {
         char c = s_line[i];
@@ -24,6 +26,8 @@ static void parse_line(void)
         } else if ((c == 'A' || c == 'a') && (i + 1 < s_len) && isdigit((unsigned char)s_line[i + 1])) {
             amp = (uint8_t)atoi(s_line + i + 1);
             has_amp = 1;
+        } else if (c == 'R' || c == 'r') {
+            has_recon = 1;
         }
     }
 
@@ -35,8 +39,12 @@ static void parse_line(void)
         AD9833_SetAmplitude(amp);
         printf("A=%u\r\n", (unsigned int)amp);
     }
-    if (!has_freq && !has_amp) {
-        printf("ERR: use F<hz> A<0-255>\r\n");
+    if (has_recon) {
+        g_recon_rebuild_request = 1u;
+        printf("RECON_REBUILD_REQUEST\r\n");
+    }
+    if (!has_freq && !has_amp && !has_recon) {
+        printf("ERR: use F<hz> A<0-255> R\r\n");
     }
 }
 

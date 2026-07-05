@@ -206,6 +206,28 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     ReconAnalysis analysis;
     uint8_t used = 0u;
 
+    extern volatile uint8_t g_recon_rebuild_request;
+    UART_Poll();
+    if (g_recon_rebuild_request) {
+        g_recon_rebuild_request = 0u;
+        printf("=== RECON_REBUILD_START ===\r\n");
+        if (Recon_BuildCurrent(lut, &analysis, &used)) {
+            recon_dds_load_lut(lut, RECON_TABLE_LEN);
+            recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.53, 0.05);
+            recon_dds_start(analysis.f0_hz);
+            *last_tick = DWT->CYCCNT;
+            *center_f0 = analysis.f0_hz;
+            *relock_count = 0u;
+            Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
+            printf("=== RECON_REBUILD_DONE f0=%.2f used=%u ===\r\n",
+                   (double)analysis.f0_hz, (unsigned)used);
+        } else {
+            printf("=== RECON_REBUILD_FAILED ===\r\n");
+        }
+        HAL_Delay(50);
+        return;
+    }
+
     if (!Recon_Capture(&analysis)) {
         printf("RECON_WAIT input_invalid\r\n");
         HAL_Delay(50);
