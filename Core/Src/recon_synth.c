@@ -36,8 +36,14 @@ int recon_synth_build_lut(const ReconAnalysis *analysis, uint16_t *lut, uint32_t
             continue;
         }
 
+        // 核心修复：消除双重相位计算！
+        // x->phase_rad 是 FFT 测量的绝对相位。但 NCO 会跟踪基波相位，所以 LUT 里只能存“相对相位”！
+        // 相对相位 = 该次谐波绝对相位 - k * 基波绝对相位
+        float rel_phase = x->phase_rad - (float)x->k * analysis->fundamental_phase_rad;
+
+        // 【正向重构】：模拟滤波器的真实效果！硬件衰减多少，我们就按比例衰减；硬件移相多少，我们就同向移相！
         float amp_v = 0.5f * x->mag_vpp * h.mag;
-        float phase = x->phase_rad + h.phase_rad;
+        float phase = rel_phase + h.phase_rad;
         for (uint32_t n = 0; n < lut_len; n++) {
             float th = 2.0f * RECON_PI * (float)x->k * (float)n / (float)lut_len;
             temp[n] += amp_v * cosf(th + phase);

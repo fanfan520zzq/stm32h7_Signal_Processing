@@ -100,7 +100,8 @@ int recon_analyze_block(const uint16_t *buf, uint32_t len, float fs_hz, ReconAna
 
     for (uint8_t k = 1; k <= RECON_MAX_HARMONICS; k++) {
         float hf = f0 * (float)k;
-        if (hf > 50050.0f || hf >= fs_hz * 0.45f) {
+        // 把截止频率放宽到 100kHz，因为扫频数据最高测到了 100kHz！
+        if (hf > 100050.0f || hf >= fs_hz * 0.45f) {
             break;
         }
 

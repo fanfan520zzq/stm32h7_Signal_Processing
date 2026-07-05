@@ -88,6 +88,8 @@ ADC_DualResult_t ADC_SampleOnce_TIM4(uint32_t psc, uint32_t arr, uint32_t length
     return result;
 }
 
+volatile uint32_t g_adc_start_dwt = 0;
+
 void Start_Sample(void) {
     HAL_ADC_Stop_DMA(&hadc1);
     HAL_ADC_Stop_DMA(&hadc2);
@@ -96,5 +98,6 @@ void Start_Sample(void) {
     HAL_ADC_Start_DMA(&hadc2, (uint32_t*)CH2_Buffer, g_adc_len);
 
     // 【重要修复】：必须先让ADC进入等待触发状态，最后再开启定时器！
+    g_adc_start_dwt = DWT->CYCCNT; // <--- 关键！记录最精确的采样首点物理时间戳
     HAL_TIM_Base_Start(&htim4);
 }

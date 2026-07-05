@@ -33,9 +33,16 @@ uint32_t recon_pll_update(ReconPll *pll, double measured_freq, double measured_p
         return 0u;
     }
 
+    // 1. 先用“过去的频率”积分过去这截 dt_s 的相位
+    // 之前代码把这步放在最后用“未来的频率”去积分，导致了严重的非因果(非物理)相位跳变！
+    pll->nco_phase += 2.0 * (double)RECON_PI * pll->last_actual_freq * dt_s;
+    pll->nco_phase = recon_wrap_pi(pll->nco_phase);
+
+    // 2. 计算当前时刻的相位误差
     double error = recon_wrap_pi(measured_phase - pll->nco_phase);
     pll->last_error = error;
 
+    // 3. PI 控制器
     pll->integral += pll->ki * error;
     if (pll->integral > 1000.0) pll->integral = 1000.0;
     if (pll->integral < -1000.0) pll->integral = -1000.0;
@@ -45,12 +52,9 @@ uint32_t recon_pll_update(ReconPll *pll, double measured_freq, double measured_p
         target_freq = 1.0;
     }
 
+    // 4. 计算下一次的输出频率，存起来给下个周期积分用
     uint32_t ftw = recon_dds_freq_to_ftw(target_freq);
-    double actual_freq = recon_dds_ftw_to_freq(ftw);
-    pll->last_actual_freq = actual_freq;
-
-    pll->nco_phase += 2.0 * (double)RECON_PI * actual_freq * dt_s;
-    pll->nco_phase = recon_wrap_pi(pll->nco_phase);
+    pll->last_actual_freq = recon_dds_ftw_to_freq(ftw);
 
     return ftw;
 }
