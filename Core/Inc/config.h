@@ -12,7 +12,7 @@
 
 // 当前要跑的调试模块 (放这里以免 CubeMX regen 擦掉):
 // 0=时钟自检  1=DDS设频  2=采样率  3=单点相干  5=整段扫频
-#define DEBUG_STAGE   14
+#define DEBUG_STAGE   15
 
 // STAGE3 外部信号源频率: 把信号发生器设成这个值, 输出接 ADC CH1+CH2 同源.
 // 改这里(并同步改发生器)测不同频点. 1MHz 是欠采样关键验证点.
