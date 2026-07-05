@@ -270,13 +270,6 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     if (ftw != 0u) {
         recon_dds_update_ftw(ftw);
     }
-    printf("RECON_RUN f0=%.2f used=%u out=%.6f err=%.4fdeg ftw=%lu relock=%lu\r\n",
-           (double)analysis.f0_hz,
-           (unsigned)analysis.harmonic_count,
-           pll->last_actual_freq,
-           pll->last_error * 57.295779513,
-           (unsigned long)g_recon_dds_ftw,
-           (unsigned long)*relock_count);
     HAL_Delay(50);
 }
 
