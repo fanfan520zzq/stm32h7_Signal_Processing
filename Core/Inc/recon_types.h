@@ -5,7 +5,7 @@
 
 #define RECON_MAX_HARMONICS 32
 #define RECON_TABLE_LEN     1024
-#define RECON_ADC_FS_HZ     2400000.0f
+#define RECON_ADC_FS_HZ     1200000.0f
 #define RECON_DAC_FS_HZ     1000000.0f
 #define RECON_PI            3.14159265358979323846f
 

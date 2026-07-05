@@ -96,7 +96,7 @@ void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
 
 static int Recon_Capture(ReconAnalysis *analysis)
 {
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(0, 99, LEN);
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4(0, 199, LEN);
     if (!res.ch1 || res.length == 0u) {
         printf("RECON capture failed\r\n");
         return 0;
@@ -347,7 +347,7 @@ void Sweep_DebugSelfTest(void)
 #elif (DEBUG_STAGE == 10)
     {
         ReconAnalysis analysis;
-        printf("=== STAGE10 recon analyzer: PC4 input only ===\r\n");
+        printf("=== STAGE10 recon analyzer: PC4 input only, Fs=%.0fHz ===\r\n", (double)RECON_ADC_FS_HZ);
         if (Recon_Capture(&analysis)) {
             recon_print_analysis(&analysis);
         }

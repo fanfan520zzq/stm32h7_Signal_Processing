@@ -2,7 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#define ADC_TO_VOLT (3.3f / 65535.0f)
+#define ADC_TO_VOLT (3.3f / 4095.0f)
 
 static float wrap_pi_f(float phase)
 {
