@@ -59,6 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Task/CMD.c
         Core/Task/ADCTask.c
         Core/Task/FFTTask.c
+        Core/Task/DDS.c
         Core/AD9833/ad9833_hal.c
         Core/Src/adc_sync.c
         Core/Src/sweep_grid.c
@@ -66,6 +67,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/goertzel.c
         Core/Src/calib.c
         Core/Src/hooks.c
+        Core/Src/classify.c
+        Core/Src/iir_runtime.c
+        Core/Src/recon_analyzer.c
+        Core/Src/recon_hlookup.c
+        Core/Src/recon_synth.c
+        Core/Src/recon_dds.c
+        Core/Src/recon_pll.c
 )
 
 

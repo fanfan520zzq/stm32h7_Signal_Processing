@@ -4,6 +4,7 @@
 #include <adc.h>
 #include "ADCTask.h"
 #include "tim.h"
+#include "iir_runtime.h"
 
 uint8_t start_adc_flag = 0;
 uint8_t fft_ready_flag = 0;
@@ -17,6 +18,13 @@ uint16_t CH1_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((
 uint16_t CH2_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
+    if (g_iir_rt_active) {
+        if (hadc == &hadc1) {
+            iir_rt_process_half(1);
+        }
+        return;
+    }
+
     if(hadc == &hadc1){
         HAL_ADC_Stop_DMA(&hadc1);
         adc1_ready = 1;
@@ -27,6 +35,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     }
     if(adc1_ready && adc2_ready){
         fft_ready_flag = 1;
+    }
+}
+
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc){
+    if (g_iir_rt_active && hadc == &hadc1) {
+        iir_rt_process_half(0);
     }
 }
 

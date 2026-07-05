@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dac.h"
 #include "dma.h"
 #include "memorymap.h"
 #include "spi.h"
@@ -36,7 +37,13 @@
 #include "sweep_grid.h"
 #include "adc_sync.h"
 #include "calib.h"
+#include "classify.h"
 #include "config.h"
+#include "iir_runtime.h"
+#include "recon_analyzer.h"
+#include "recon_synth.h"
+#include "recon_dds.h"
+#include "recon_pll.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -87,6 +94,69 @@ void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
     }
 }
 
+static int Recon_Capture(ReconAnalysis *analysis)
+{
+    ADC_DualResult_t res = ADC_SampleOnce_TIM4(0, 99, LEN);
+    if (!res.ch1 || res.length == 0u) {
+        printf("RECON capture failed\r\n");
+        return 0;
+    }
+    if (!recon_analyze_block(res.ch1, res.length, RECON_ADC_FS_HZ, analysis)) {
+        printf("RECON analyze failed: check PC4 input, offset, amplitude, freq 1k..50k\r\n");
+        return 0;
+    }
+    return 1;
+}
+
+static void Recon_EnsureUnityHTable(void)
+{
+    if (g_Htable_len > 0) {
+        return;
+    }
+
+    g_Htable_len = 3;
+    g_Htable[0] = (HPoint){1000.0f, 1.0f, 0.0f, 12, 1};
+    g_Htable[1] = (HPoint){25000.0f, 1.0f, 0.0f, 12, 1};
+    g_Htable[2] = (HPoint){50000.0f, 1.0f, 0.0f, 12, 1};
+    printf("RECON warning: g_Htable empty, using unity H(f) for debug\r\n");
+}
+
+static int Recon_BuildCurrent(uint16_t *lut, ReconAnalysis *analysis, uint8_t *used)
+{
+    Recon_EnsureUnityHTable();
+    if (!Recon_Capture(analysis)) {
+        return 0;
+    }
+    if (!recon_synth_build_lut(analysis, lut, RECON_TABLE_LEN, 1.0f, 2.0f, used)) {
+        printf("RECON synth failed\r\n");
+        return 0;
+    }
+    return 1;
+}
+
+static void Recon_PrintLutStats(const uint16_t *lut, uint32_t len, uint8_t used)
+{
+    uint16_t minv = 4095u;
+    uint16_t maxv = 0u;
+    for (uint32_t i = 0; i < len; i++) {
+        if (lut[i] < minv) minv = lut[i];
+        if (lut[i] > maxv) maxv = lut[i];
+    }
+    printf("RECON LUT used=%u min=%u max=%u vpp_code=%u first=%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+           (unsigned)used, minv, maxv, (unsigned)(maxv - minv),
+           lut[0], lut[1], lut[2], lut[3], lut[4], lut[5], lut[6], lut[7]);
+}
+
+
+// # 1. 设置 OpenRouter API Key
+//
+// # 2. 将基础 URL 指向 OpenRouter 兼容端点
+// $env:ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+//
+// # 3. 将密钥传递给认证 Token
+//
+// # 4. 将原有的 API Key 清空
+// $env:ANTHROPIC_API_KEY=""
 #ifdef DEBUG_SWEEP
 /* ============================================================
  *  分模块板上自检. 烧录后看串口 (UART1, 115200 默认).
@@ -235,7 +305,155 @@ void Sweep_DebugSelfTest(void)
                g_Htable[i].resolution, g_Htable[i].settled);
     }
     printf("=== sweep done, %d points ===\r\n", g_Htable_len);
-    while (1) { HAL_Delay(1000); }   // 跑一次即可, 停在这
+
+    /* 片上类型判别(发挥1 核心): 跑完直接判 + 出 -3dB 频率 */
+    {
+        FilterAnalysis analysis;
+        if (sweep_analyze(&analysis)) {
+            print_filter_analysis(&analysis);
+        } else {
+            printf("\r\n===> 滤波类型: UNKNOWN 未知 (数据点不足)\r\n");
+        }
+    }
+
+    printf("\r\n(现在系统已切入空闲模式，您可以随时发送类似 'F1000' 或 'A200' 的指令手动调节 AD9833 输出！)\r\n");
+    while (1) { 
+        extern void UART_Poll(void);
+        UART_Poll();
+        HAL_Delay(10); 
+    }
+#elif (DEBUG_STAGE == 8)
+    {
+        static int iir_stage_started = 0;
+        if (!iir_stage_started) {
+            iir_stage_started = 1;
+            iir_rt_start_passthrough();
+        }
+        printf("STAGE8 running: PC4 -> passthrough -> PA4\r\n");
+        iir_rt_print_stats();
+        HAL_Delay(1000);
+    }
+#elif (DEBUG_STAGE == 9)
+    {
+        static int iir_stage_started = 0;
+        if (!iir_stage_started) {
+            iir_stage_started = 1;
+            iir_rt_start_current_bpf();
+        }
+        printf("STAGE9 running: PC4 -> current BPF IIR -> PA4\r\n");
+        iir_rt_print_stats();
+        HAL_Delay(1000);
+    }
+#elif (DEBUG_STAGE == 10)
+    {
+        ReconAnalysis analysis;
+        printf("=== STAGE10 recon analyzer: PC4 input only ===\r\n");
+        if (Recon_Capture(&analysis)) {
+            recon_print_analysis(&analysis);
+        }
+        HAL_Delay(500);
+    }
+#elif (DEBUG_STAGE == 11)
+    {
+        ReconAnalysis analysis;
+        printf("=== STAGE11 harmonic table: PC4 input only ===\r\n");
+        if (Recon_Capture(&analysis)) {
+            recon_print_analysis(&analysis);
+        }
+        HAL_Delay(1000);
+    }
+#elif (DEBUG_STAGE == 12)
+    {
+        static uint16_t recon_lut[RECON_TABLE_LEN];
+        ReconAnalysis analysis;
+        uint8_t used = 0u;
+        printf("=== STAGE12 synth LUT only: no DAC output ===\r\n");
+        if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
+            recon_print_analysis(&analysis);
+            Recon_PrintLutStats(recon_lut, RECON_TABLE_LEN, used);
+        }
+        HAL_Delay(1500);
+    }
+#elif (DEBUG_STAGE == 13)
+    {
+        static int started = 0;
+        static uint16_t recon_lut[RECON_TABLE_LEN];
+        ReconAnalysis analysis;
+        uint8_t used = 0u;
+        if (!started) {
+            printf("=== STAGE13 static reconstruction DDS: PC4 analyze -> PA4 output ===\r\n");
+            recon_dds_init();
+            if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
+                recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
+                recon_dds_start(analysis.f0_hz);
+                Recon_PrintLutStats(recon_lut, RECON_TABLE_LEN, used);
+                started = 1;
+            }
+        }
+        printf("STAGE13 running static recon DDS ftw=%lu active=%u\r\n",
+               (unsigned long)g_recon_dds_ftw, (unsigned)g_recon_dds_active);
+        HAL_Delay(1000);
+    }
+#elif (DEBUG_STAGE == 14)
+    {
+        static int started = 0;
+        static uint16_t recon_lut[RECON_TABLE_LEN];
+        static ReconPll pll;
+        static uint32_t last_tick = 0u;
+        static uint32_t relock_count = 0u;
+        ReconAnalysis analysis;
+        uint8_t used = 0u;
+
+        if (!started) {
+            printf("=== STAGE14 PLL reconstruction DDS: PC4 analyze -> PA4 locked output ===\r\n");
+            recon_dds_init();
+            if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
+                recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
+                recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.8, 0.12);
+                recon_dds_start(analysis.f0_hz);
+                last_tick = HAL_GetTick();
+                Recon_PrintLutStats(recon_lut, RECON_TABLE_LEN, used);
+                started = 1;
+            }
+            HAL_Delay(200);
+            return;
+        }
+
+        if (Recon_Capture(&analysis)) {
+            uint32_t now = HAL_GetTick();
+            double dt = (last_tick == 0u) ? 0.02 : (double)(now - last_tick) / 1000.0;
+            if (dt <= 0.0) dt = 0.02;
+            last_tick = now;
+
+            if (analysis.input_vpp < 0.05f || fabs(pll.last_error) > 1.0) {
+                relock_count++;
+            } else {
+                relock_count = 0u;
+            }
+
+            if (relock_count >= 10u) {
+                printf("RECON PLL relock\r\n");
+                if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
+                    recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
+                    recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.8, 0.12);
+                    recon_dds_start(analysis.f0_hz);
+                    relock_count = 0u;
+                }
+            } else {
+                uint32_t ftw = recon_pll_update(&pll, analysis.f0_hz, analysis.fundamental_phase_rad, dt);
+                if (ftw != 0u) {
+                    recon_dds_update_ftw(ftw);
+                }
+                printf("RECON PLL f0=%.2f out=%.6f err=%.4fdeg ftw=%lu relock=%lu\r\n",
+                       (double)analysis.f0_hz,
+                       pll.last_actual_freq,
+                       pll.last_error * 57.295779513,
+                       (unsigned long)g_recon_dds_ftw,
+                       (unsigned long)relock_count);
+            }
+        }
+        HAL_Delay(50);
+    }
 #endif
 }
 #endif /* DEBUG_SWEEP */
@@ -284,6 +502,8 @@ int main(void)
   MX_TIM13_Init();
   MX_SPI1_Init();
   MX_TIM5_Init();
+  MX_DAC1_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
   AD9833_Init();
@@ -301,11 +521,9 @@ int main(void)
   // AD9833_SetFixedOutput(10000, WAVE_SINE);
   // int k=1;
 
-
   /* SI5351 Output Test */
   // si5351_Init();
   // si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
-
 
   /* USER CODE END 2 */
 
@@ -460,6 +678,7 @@ void MPU_Config(void)
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
