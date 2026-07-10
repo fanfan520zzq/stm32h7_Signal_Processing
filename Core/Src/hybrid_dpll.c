@@ -11,10 +11,10 @@ double DSP_Measure_Block_Freq(uint16_t* buffer, uint16_t length, uint32_t dc_off
     double first_up_idx = -1.0;
     double last_up_idx = -1.0;
     uint32_t periods = 0;
-    uint8_t armed = (buffer[0] < dc_offset - 500);
+    uint8_t armed = (buffer[0] < dc_offset - 50);
     
     for (uint16_t i = 1; i < length; i++) {
-        if (buffer[i] < dc_offset - 500) {
+        if (buffer[i] < dc_offset - 50) {
             armed = 1;
         }
         if (armed && buffer[i-1] < dc_offset && buffer[i] >= dc_offset) {

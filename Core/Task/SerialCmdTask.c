@@ -41,6 +41,10 @@ void SerialCmdTask_Poll(void) {
                         // AF 12 FF FA: 开始数字移相器自动模式，默认0度
                         dpll_enable = 1;
                         user_phase_shift_deg = 0.0;
+                        
+                        // 强制重置锁相环捕获状态，实现“每次点ON都重新测频锁相”
+                        g_center_freq = -1.0;
+                        g_dpll_integral = 0.0;
                     } 
                     else if (payload == 0xFF23) {
                         // AF 23 FF FA: 待机状态

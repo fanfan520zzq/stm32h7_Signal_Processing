@@ -41,7 +41,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-
+volatile uint32_t g_dac_dma_timestamp = 0;  // DAC DMA 中断最早时刻
+volatile uint32_t g_adc_dma_timestamp = 0;  // ADC DMA 中断最早时刻
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -208,7 +209,7 @@ void SysTick_Handler(void)
 void DMA1_Stream1_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream1_IRQn 0 */
-
+  g_dac_dma_timestamp = DWT->CYCCNT;  // 第一条指令！在HAL开销之前捕获！
   /* USER CODE END DMA1_Stream1_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_dac1_ch2);
   /* USER CODE BEGIN DMA1_Stream1_IRQn 1 */
@@ -222,7 +223,7 @@ void DMA1_Stream1_IRQHandler(void)
 void DMA1_Stream2_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream2_IRQn 0 */
-
+  g_adc_dma_timestamp = DWT->CYCCNT;  // 第一条指令！在HAL开销之前捕获！
   /* USER CODE END DMA1_Stream2_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_adc1);
   /* USER CODE BEGIN DMA1_Stream2_IRQn 1 */

@@ -70,7 +70,8 @@ void DDS_Update_FTW(uint32_t ftw) {
 // 物理播出时刻 = snapshot_dwt + 512us（剩余的另一半 buffer）
 // ------------------------------------------------------------
 void HAL_DACEx_ConvHalfCpltCallbackCh2(DAC_HandleTypeDef *hdac) {
-    dds_snapshot_dwt   = DWT->CYCCNT;
+    extern volatile uint32_t g_dac_dma_timestamp;
+    dds_snapshot_dwt   = g_dac_dma_timestamp;  // 使用IRQ入口处的早期捕获！
     dds_snapshot_phase = dds_phase_acc;
 
     for (int i = 0; i < DDS_BUF_SIZE / 2; i++) {

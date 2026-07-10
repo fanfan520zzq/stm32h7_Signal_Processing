@@ -3,7 +3,7 @@
 #include "dds_core.h"
 #include "hybrid_dpll.h"
 #include <math.h>
-
+#include <stdio.h>
 // ============================================================
 // 静态/全局变量定义
 // ============================================================
@@ -12,10 +12,10 @@ __attribute__((section(".dma_buffer"))) uint16_t adc_buffer[ADC_BUF_SIZE];
 
 // DPLL 可调参数（Live Watch 里直接改，立刻生效）
 uint8_t  dpll_enable        = 1;      // 0=开环(纯频率跟踪), 1=闭环锁相
-float    dpll_kp             = 3.80f; // 比例增益：越大收敛越快，过大会振荡
-float    dpll_ki             = 1.00f; // 积分增益：消除稳态频率偏差
+float    dpll_kp             = 8.00f; // 比例增益：恢复极速收敛！
+float    dpll_ki             = 1.28f; // 积分增益：消除稳态频率偏差
 double   user_phase_shift_deg = 0.0;  // 用户手动相位偏移（度），正数=超前
-float    hardware_delay_us    = 4.60f; // 补偿纯模拟电路(低通滤波、运放)带来的物理延时
+float    hardware_delay_us    = 3.38; // 补偿纯模拟电路(低通滤波、运放)带来的物理延时
 
 // DPLL 状态监视（只读，Live Watch / 串口打印用）
 double   g_measured_freq    = 0.0;  // 本块测得的输入频率 (Hz)
@@ -45,6 +45,28 @@ extern uint32_t SystemCoreClock;
 // DPLL 核心数据处理任务
 // ============================================================
 void DPLL_Process_ADC_Chunk(uint16_t* buf, uint16_t len) {
+    // ==========================================================
+    // 终极杀招：抢占式优先级配置 (彻底杜绝中断打架导致的跳变)
+    // ==========================================================
+    static uint8_t nvic_init = 0;
+    if (!nvic_init) {
+        // STM32中数字越小优先级越高。0是最高优先级。
+        // 将 ADC DMA 设为最高优先级 0，它将能打断所有其他中断，确保时间戳绝对精确！
+        HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 0, 0); 
+        
+        // 将 DAC DMA 设为次高优先级 1。DAC中断里有长达几微秒的查表计算，绝不能让它阻塞 ADC！
+        HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 1, 0); 
+        
+        // 将滴答定时器设为优先级 2，防止它阻塞高速信号处理
+        HAL_NVIC_SetPriority(SysTick_IRQn, 2, 0);
+        
+        // UART 优先级最低，printf 绝不能干扰测相！
+        HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 3, 0);  // UART TX DMA
+        HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 3, 0);  // UART RX DMA
+        HAL_NVIC_SetPriority(USART1_IRQn, 3, 0);
+        
+        nvic_init = 1;
+    }
 
     // ----------------------------------------------------------
     // STEP 1: 幅度统计 & 直流跟踪（每10块 ≈ 100ms 更新一次）
@@ -79,84 +101,98 @@ void DPLL_Process_ADC_Chunk(uint16_t* buf, uint16_t len) {
     g_measured_freq = coarse_freq;
 
     // 大跳变检测：重置捕获（清积分、快速重锁）
-    if (g_center_freq < 0.0 || fabs(coarse_freq - g_center_freq - g_dpll_integral) > 50.0) {
+    double jump_threshold = (g_center_freq > 0.0) ? (g_center_freq * 0.05 + 20.0) : 50.0;
+    if (g_center_freq < 0.0 || fabs(coarse_freq - g_center_freq - g_dpll_integral) > jump_threshold) {
         g_center_freq   = coarse_freq;
         g_dpll_integral = 0.0;
     }
 
     // ----------------------------------------------------------
-    // STEP 3: 过零点精确定位（施密特触发 + 亚采样插值）
-    // ----------------------------------------------------------
-    double zc_idx = -1.0;
-    uint8_t armed = (buf[0] < dc_offset - 500);
-    for (int i = 1; i < len; i++) {
-        if (buf[i] < dc_offset - 500) armed = 1;
-        if (armed && buf[i-1] < dc_offset && buf[i] >= dc_offset) {
-            double frac = (double)(dc_offset - buf[i-1]) / (double)(buf[i] - buf[i-1]);
-            zc_idx = (double)(i - 1) + frac;
-            break;
-        }
-    }
-
-    // 本块无过零点（超低频），直接退出等下一块
-    if (zc_idx < 0.0) {
-        HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUF_SIZE);
-        return;
-    }
-
-    // ----------------------------------------------------------
-    // STEP 4: 计算过零点的 DWT 绝对时间戳
-    // ----------------------------------------------------------
-    double samples_after_zc = (double)(len - 1) - zc_idx;
-    uint32_t zc_dwt = adc_isr_dwt
-                    - (uint32_t)(samples_after_zc / 200000.0 * (double)SystemCoreClock);
-
-    // ----------------------------------------------------------
-    // STEP 5: 从 DDS 快照外推过零时刻的硬件相位
+    // STEP 3 ~ 6: 多周期批量鉴相 (相干积累算法降噪)
     // ----------------------------------------------------------
     extern volatile uint32_t dds_snapshot_phase, dds_snapshot_dwt;
     extern volatile uint32_t dds_ftw;
 
-    // 锚点时刻：buffer[0] 变成模拟电压的物理时间 (延后 1024 us)
     uint32_t anchor_time_dwt = dds_snapshot_dwt
                              + (uint32_t)(0.001024 * (double)SystemCoreClock);
-
-    // 锚点相位：buffer[0] 对应的累加器相位
     uint32_t anchor_phase = dds_snapshot_phase + dds_ftw;
 
-    // 从锚点时刻到过零时刻，经过了多少个 DAC 样本（有符号，可为负）
-    int32_t delta_dac_samples = (int32_t)(
-        (int64_t)((int32_t)(zc_dwt - anchor_time_dwt)) * 1000000LL
-        / (int64_t)SystemCoreClock
-    );
-
-    // 外推过零时刻的硬件绝对相位（32位无符号溢出 = 自动取模2π）
-    uint32_t phase_at_zc = anchor_phase
-                         + (uint32_t)((int64_t)(int32_t)dds_ftw * delta_dac_samples);
-
-    // ----------------------------------------------------------
-    // STEP 6: 计算相位误差
-    // ----------------------------------------------------------
     double hw_delay_cycles = (double)hardware_delay_us / 1000000.0 * g_measured_freq;
     uint32_t target_phase  = (uint32_t)(user_phase_shift_deg / 360.0 * 4294967296.0)
                            + (uint32_t)(hw_delay_cycles * 4294967296.0);
                            
-    int32_t  phase_err_raw = (int32_t)(target_phase - phase_at_zc);
-    g_phase_err_cyc        = (double)phase_err_raw / 4294967296.0;  // -0.5 ~ +0.5
+    double error_sum_cyc = 0.0;
+    int zc_count = 0;
+
+    uint8_t armed = (buf[0] < dc_offset - 50);
+    for (int i = 1; i < len; i++) {
+        if (buf[i] < dc_offset - 50) armed = 1;
+        if (armed && buf[i-1] < dc_offset && buf[i] >= dc_offset) {
+            double frac = (double)(dc_offset - buf[i-1]) / (double)(buf[i] - buf[i-1]);
+            double zc_idx = (double)(i - 1) + frac;
+            
+            double samples_after_zc = (double)(len - 1) - zc_idx;
+            uint32_t zc_dwt = adc_isr_dwt
+                            - (uint32_t)(samples_after_zc / 200000.0 * (double)SystemCoreClock);
+                            
+            // 使用 double 保留亚微秒精度，彻底消除整数截断引起的相位量化抖动
+            double delta_dac_samples_f = (double)(int32_t)(zc_dwt - anchor_time_dwt)
+                                       * (1000000.0 / (double)SystemCoreClock);
+            
+            // 分离整数与小数部分，确保大数乘法精度
+            int32_t delta_int  = (int32_t)delta_dac_samples_f;
+            double  delta_frac = delta_dac_samples_f - (double)delta_int;
+            
+            uint32_t phase_at_zc = anchor_phase
+                                 + (uint32_t)((int64_t)(int32_t)dds_ftw * delta_int)
+                                 + (uint32_t)(int32_t)((double)(int32_t)dds_ftw * delta_frac);
+                                 
+            int32_t  phase_err_raw = (int32_t)(target_phase - phase_at_zc);
+            error_sum_cyc += (double)phase_err_raw / 4294967296.0;
+            
+            zc_count++;
+            armed = 0;
+        }
+    }
+
+    if (zc_count == 0) {
+        HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUF_SIZE);
+        return;
+    }
+
+    g_phase_err_cyc = error_sum_cyc / (double)zc_count;
+
+    // ----------------------------------------------------------
+    // STEP 6.5: 中值滤波 (剔除偶尔的单次中断延迟跳变)
+    // ----------------------------------------------------------
+    static double err_history[3] = {0.0, 0.0, 0.0};
+    err_history[2] = err_history[1];
+    err_history[1] = err_history[0];
+    err_history[0] = g_phase_err_cyc;
+
+    double a = err_history[0];
+    double b = err_history[1];
+    double c = err_history[2];
+    double median_err;
+    if ((a <= b && b <= c) || (c <= b && b <= a)) median_err = b;
+    else if ((b <= a && a <= c) || (c <= a && a <= b)) median_err = a;
+    else median_err = c;
 
     // ----------------------------------------------------------
     // STEP 7: PI 控制器 → 直接写 dds_ftw
     // ----------------------------------------------------------
     if (dpll_enable) {
-        g_dpll_integral += (double)dpll_ki * g_phase_err_cyc;
+        g_dpll_integral += (double)dpll_ki * median_err;
         if (g_dpll_integral >  5000.0) g_dpll_integral =  5000.0;
         if (g_dpll_integral < -5000.0) g_dpll_integral = -5000.0;
 
-        g_out_freq = g_center_freq + (double)dpll_kp * g_phase_err_cyc + g_dpll_integral;
+        g_out_freq = g_center_freq + (double)dpll_kp * median_err + g_dpll_integral;
         if (g_out_freq < 1.0) g_out_freq = 1.0;
 
         // 直接写硬件FTW（原子写，DMA ISR读取时自动生效）
         dds_ftw = (uint32_t)(g_out_freq / 1000000.0 * 4294967296.0);
+        
+        // printf("Err: %.4f cyc, OutFreq: %.2f Hz\r\n", g_phase_err_cyc, g_out_freq);
     }
 
     // 重启 ADC One-Shot 采样
@@ -172,7 +208,8 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc) {
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
     if (hadc->Instance == ADC1) {
-        adc_isr_dwt     = DWT->CYCCNT;  // 立刻捕获！消除所有主循环延迟抖动
+        extern volatile uint32_t g_adc_dma_timestamp;
+        adc_isr_dwt     = g_adc_dma_timestamp;  // 使用IRQ入口处的早期捕获！
         adc_chunk_ready = 1;
     }
 }
