@@ -2,6 +2,8 @@
 #include "sweep_engine.h"
 #include <math.h>
 
+uint8_t g_recon_bypass_h = 0u;
+
 static float interp_phase(float p0, float p1, float t)
 {
     float d = p1 - p0;
@@ -14,6 +16,12 @@ int recon_hlookup(float freq_hz, ReconHPoint *out)
 {
     if (out == 0 || g_Htable_len <= 0) {
         return 0;
+    }
+
+    if (g_recon_bypass_h) {
+        out->mag = 1.0f;
+        out->phase_rad = 0.0f;
+        return 1;
     }
 
     if (freq_hz <= g_Htable[0].f_actual) {

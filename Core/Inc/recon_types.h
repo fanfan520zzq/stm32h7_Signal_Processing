@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define RECON_MAX_HARMONICS 32
+#define RECON_MAX_HARMONICS 64
 #define RECON_TABLE_LEN     1024
 #define RECON_ADC_FS_HZ     1200000.0f
 #define RECON_DAC_FS_HZ     1000000.0f

@@ -12,6 +12,12 @@ typedef struct {
     double last_actual_freq;
     double kp;
     double ki;
+    double previous_error;
+    double phase_rate_hz;
+    uint8_t phase_rate_initialized;
+    uint32_t lock_count;
+    uint32_t bad_count;
+    uint8_t locked_hold;
 } ReconPll;
 
 void recon_pll_init(ReconPll *pll, double freq_hz, double phase_rad, double kp, double ki);

@@ -74,15 +74,23 @@ void recon_dds_fill(uint16_t *dst, uint32_t len)
     }
 }
 
-void recon_dds_start(float freq_hz)
+void recon_dds_start_phase(float freq_hz, float phase_rad)
 {
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
     HAL_TIM_Base_Start(&htim6);
     recon_dds_set_freq(freq_hz);
-    g_recon_dds_phase_acc = 0u;
+    while (phase_rad < 0.0f) phase_rad += 2.0f * RECON_PI;
+    while (phase_rad >= 2.0f * RECON_PI) phase_rad -= 2.0f * RECON_PI;
+    g_recon_dds_phase_acc = (uint32_t)((double)phase_rad /
+                                       (2.0 * (double)RECON_PI) * 4294967296.0);
     g_recon_dds_active = 1u;
     recon_dds_fill(Buffer1, RECON_TABLE_LEN);
     HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)Buffer1, RECON_TABLE_LEN, DAC_ALIGN_12B_R);
+}
+
+void recon_dds_start(float freq_hz)
+{
+    recon_dds_start_phase(freq_hz, 0.0f);
 }
 
 void recon_dds_stop(void)

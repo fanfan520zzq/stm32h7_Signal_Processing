@@ -7,6 +7,7 @@
 #include "adc.h"
 #include <math.h>
 #include <stdio.h>
+#define DEBUG_SWEEP
 
 extern void dds_set_frequency(float hz);
 

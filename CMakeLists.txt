@@ -74,6 +74,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/recon_synth.c
         Core/Src/recon_dds.c
         Core/Src/recon_pll.c
+        Core/Src/known_model.c
 )
 
 

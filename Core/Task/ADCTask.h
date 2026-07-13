@@ -14,7 +14,12 @@ typedef struct {
     const uint16_t *ch1;
     const uint16_t *ch2;
     uint32_t length;
+    uint32_t start_dwt;
+    uint32_t end_dwt;
 } ADC_DualResult_t;
+
+extern volatile uint32_t g_adc_start_dwt;
+extern volatile uint32_t g_adc_end_dwt;
 
 extern uint16_t CH1_Buffer[LEN];
 extern uint16_t CH2_Buffer[LEN];

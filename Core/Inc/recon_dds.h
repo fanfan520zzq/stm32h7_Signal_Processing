@@ -15,6 +15,7 @@ void recon_dds_update_ftw(uint32_t ftw);
 uint32_t recon_dds_freq_to_ftw(double freq_hz);
 double recon_dds_ftw_to_freq(uint32_t ftw);
 void recon_dds_start(float freq_hz);
+void recon_dds_start_phase(float freq_hz, float phase_rad);
 void recon_dds_stop(void);
 void recon_dds_fill(uint16_t *dst, uint32_t len);
 

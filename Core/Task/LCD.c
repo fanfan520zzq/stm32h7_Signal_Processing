@@ -33,7 +33,7 @@ static void lcd_send_raw(const uint8_t *data, uint16_t len) {
 }
 
 
-static void lcd_cmd(const char *fmt, ...) {
+void lcd_cmd(const char *fmt, ...) {
     static uint8_t cmd_buf[128];  // 不需要 dma_buffer，因为会被 memcpy 进 tx_front
     va_list args;
     va_start(args, fmt);

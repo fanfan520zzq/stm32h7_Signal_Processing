@@ -30,6 +30,10 @@
 #include <sys/time.h>
 #include <sys/times.h>
 #include "usart.h"
+#include <stdint.h>
+
+/* 1: suppress printf debug text on USART1; LCD DMA protocol is unaffected. */
+volatile uint8_t g_uart_debug_quiet = 0u;
 
 
 /* Variables */
@@ -82,6 +86,9 @@ __attribute__((weak)) int _write(int file, char *ptr, int len)
 {
 #ifdef __GNUC__
   (void)file;
+  if (g_uart_debug_quiet) {
+    return len;
+  }
   HAL_UART_Transmit(&huart1, (uint8_t *)ptr, len, HAL_MAX_DELAY);
   return len;
 #else
@@ -96,6 +103,9 @@ __attribute__((weak)) int _write(int file, char *ptr, int len)
 int fputc(int ch, FILE *f)
 {
   (void)f;
+  if (g_uart_debug_quiet) {
+    return ch;
+  }
   HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
   return ch;
 }

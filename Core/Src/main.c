@@ -1,4 +1,4 @@
-﻿/* USER CODE BEGIN Header */
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -38,6 +38,7 @@
 #include "adc_sync.h"
 #include "calib.h"
 #include "classify.h"
+#include "known_model.h"
 #include "config.h"
 #include "iir_runtime.h"
 #include "recon_analyzer.h"
@@ -45,8 +46,11 @@
 #include "recon_dds.h"
 #include "recon_pll.h"
 #include "recon_hlookup.h"
+#include "recon_config.h"
 #include <stdio.h>
 #include <math.h>
+
+extern volatile uint8_t g_uart_debug_quiet;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -84,10 +88,6 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define RECON_ADC_FAST_FS_HZ 1200000.0f
-#define RECON_ADC_LOW_FS_HZ   200000.0f
-#define RECON_AUTO_REBUILD_CONFIRM 3u
-
 static ReconAnalysis s_last_recon_analysis;
 static uint8_t s_last_recon_valid = 0u;
 static uint8_t s_last_recon_used = 0u;
@@ -107,11 +107,35 @@ void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
 static int Recon_CaptureAt(uint32_t psc, uint32_t arr, float fs_hz, ReconAnalysis *analysis)
 {
     ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, LEN);
-    if (!res.ch1 || res.length == 0u) {
+    const uint16_t *recon_buf = RECON_USE_ADC2_DEBUG ? res.ch2 : res.ch1;
+    if (!recon_buf || res.length == 0u) {
         printf("RECON capture failed\r\n");
         return 0;
     }
-    if (!recon_analyze_block(res.ch1, res.length, fs_hz, analysis)) {
+    float fs_used = fs_hz;
+#if RECON_USE_MEASURED_ADC_FS
+    if (res.end_dwt > res.start_dwt && res.length > 1u) {
+        double elapsed_s = (double)(res.end_dwt - res.start_dwt) / 480000000.0;
+        float fs_measured = (float)((double)(res.length - 1u) / elapsed_s);
+        if (fs_measured > fs_hz * 0.98f && fs_measured < fs_hz * 1.02f) {
+            fs_used = fs_measured;
+        }
+    }
+#endif
+     if (!recon_analyze_block(recon_buf, res.length, fs_used, analysis)) {
+        uint32_t sum = 0u;
+        uint16_t minv = 4095u, maxv = 0u;
+        uint32_t rail = 0u;
+        for (uint32_t i = 0; i < res.length; i++) {
+            uint16_t v = recon_buf[i];
+            sum += v;
+            if (v < minv) minv = v;
+            if (v > maxv) maxv = v;
+            if (v <= 8u || v >= 4087u) rail++;
+        }
+        printf("RECON reject fs=%.0f dc=%.1f min=%u max=%u rail=%lu/%lu\r\n",
+               (double)fs_hz, (double)sum / (double)res.length,
+               minv, maxv, (unsigned long)rail, (unsigned long)res.length);
         return 0;
     }
     return 1;
@@ -119,21 +143,21 @@ static int Recon_CaptureAt(uint32_t psc, uint32_t arr, float fs_hz, ReconAnalysi
 
 static int Recon_Capture(ReconAnalysis *analysis)
 {
-    if (Recon_CaptureAt(0, 199, RECON_ADC_FAST_FS_HZ, analysis)) {
-        if (analysis->f0_hz < 3000.0f) {
-            ReconAnalysis low;
-            if (Recon_CaptureAt(0, 1199, RECON_ADC_LOW_FS_HZ, &low)) {
-                *analysis = low;
-            }
-        }
-        return 1;
-    }
-
+    /* The reconstruction input is specified as 1..50 kHz.  Use 200 kHz
+     * first so a 1 kHz block contains many periods.  Deciding the sampling
+     * rate from a short 1.2 MHz block can mistake a low-frequency waveform
+     * after filtering and poison both f0 and the harmonic DFT. */
     if (Recon_CaptureAt(0, 1199, RECON_ADC_LOW_FS_HZ, analysis)) {
         return 1;
     }
 
-    printf("RECON analyze failed: check PC4 input, offset, amplitude, freq 1k..50k\r\n");
+    /* Fallback for a marginal low-rate capture. */
+    if (Recon_CaptureAt(0, 199, RECON_ADC_FAST_FS_HZ, analysis)) {
+        return 1;
+    }
+
+    printf("RECON analyze failed: check %s input, offset, amplitude, freq 1k..50k\r\n",
+           RECON_USE_ADC2_DEBUG ? "ADC2/PB1" : "ADC1/PC4");
     return 0;
 }
 
@@ -150,12 +174,10 @@ static void Recon_EnsureUnityHTable(void)
     printf("RECON warning: g_Htable empty, using unity H(f) fallback\r\n");
 }
 
-static int Recon_BuildCurrent(uint16_t *lut, ReconAnalysis *analysis, uint8_t *used)
+static int Recon_BuildFromAnalysis(uint16_t *lut, ReconAnalysis *analysis, uint8_t *used)
 {
+    g_recon_bypass_h = RECON_USE_ADC2_DEBUG;
     Recon_EnsureUnityHTable();
-    if (!Recon_Capture(analysis)) {
-        return 0;
-    }
     // 鍋忕疆鐢靛帇璋冨埌 1.65V (灞呬腑)锛屾渶澶у厑璁稿嘲宄板€艰皟鍒?3.2V (鎺ヨ繎 3.3V 婊￠噺绋?
     // 涔嬪墠鍐欐浜?2.0V锛屽鑷翠竴鏃﹂亣鍒板甫鍚夊竷鏂繃鍐茬殑鏂规尝锛岀洿鎺ヨ寮鸿缂╂斁鍘嬬缉锛?
     if (!recon_synth_build_lut(analysis, lut, RECON_TABLE_LEN, 1.65f, 3.2f, used)) {
@@ -166,6 +188,14 @@ static int Recon_BuildCurrent(uint16_t *lut, ReconAnalysis *analysis, uint8_t *u
     s_last_recon_valid = 1u;
     s_last_recon_used = (used != 0) ? *used : 0u;
     return 1;
+}
+
+static int Recon_BuildCurrent(uint16_t *lut, ReconAnalysis *analysis, uint8_t *used)
+{
+    if (!Recon_Capture(analysis)) {
+        return 0;
+    }
+    return Recon_BuildFromAnalysis(lut, analysis, used);
 }
 
 static void Recon_PrintLutStats(const uint16_t *lut, uint32_t len, uint8_t used)
@@ -303,9 +333,13 @@ static int Recon_LoadCurrent(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
         return 0;
     }
 
+    printf("RECON source=%s H=%s\r\n",
+           RECON_USE_ADC2_DEBUG ? "ADC2/PB1 DUT" : "ADC1/PC4 INPUT",
+           RECON_USE_ADC2_DEBUG ? "BYPASS" : "TABLE");
+
     recon_dds_load_lut(lut, RECON_TABLE_LEN);
     recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, kp, ki);
-    recon_dds_start(analysis.f0_hz);
+    recon_dds_start_phase(analysis.f0_hz, analysis.fundamental_phase_rad);
     if (last_tick) {
         *last_tick = DWT->CYCCNT;
     }
@@ -317,9 +351,33 @@ static int Recon_LoadCurrent(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     }
     s_recon_auto_change_count = 0u;
     Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
+    recon_print_analysis(&analysis);
     if (done_tag) {
         printf("%s f0=%.2f used=%u\r\n", done_tag, (double)analysis.f0_hz, (unsigned)used);
     }
+    return 1;
+}
+
+static int Recon_LoadAnalysis(uint16_t *lut, const ReconAnalysis *source,
+                              ReconPll *pll, uint32_t *last_tick,
+                              double kp, double ki)
+{
+    ReconAnalysis analysis = *source;
+    uint8_t used = 0u;
+
+    if (!Recon_BuildFromAnalysis(lut, &analysis, &used)) {
+        return 0;
+    }
+
+    printf("RECON source=%s H=%s\r\n",
+           RECON_USE_ADC2_DEBUG ? "ADC2/PB1 DUT" : "ADC1/PC4 INPUT",
+           RECON_USE_ADC2_DEBUG ? "BYPASS" : "TABLE");
+    recon_dds_load_lut(lut, RECON_TABLE_LEN);
+    recon_pll_init(pll, analysis.f0_hz, analysis.fundamental_phase_rad, kp, ki);
+    recon_dds_start_phase(analysis.f0_hz, analysis.fundamental_phase_rad);
+    if (last_tick) *last_tick = DWT->CYCCNT;
+    Recon_PrintLutStats(lut, RECON_TABLE_LEN, used);
+    recon_print_analysis(&analysis);
     return 1;
 }
 
@@ -358,8 +416,55 @@ static void Recon_EnableDwt(void)
 
 static int Recon_StartPllFromCurrentInput(uint16_t *lut, ReconPll *pll, uint32_t *last_tick)
 {
+    /* After LEARN, ADC2/AD9833 may still contain a transition block.
+     * Discard several complete captures before using one to initialize PLL. */
+    for (uint32_t i = 0u; i < RECON_FIRST_LOCK_WARMUP; ++i) {
+        ReconAnalysis warmup;
+        if (!Recon_Capture(&warmup)) {
+            return 0;
+        }
+        HAL_Delay(RECON_FIRST_LOCK_GAP_MS);
+    }
+
+    /* Do not initialize from the first post-warmup block. A filtered square
+     * wave can occasionally make the zero-crossing estimator report 3*f0.
+     * Vote over several blocks and use the largest stable frequency cluster. */
+    ReconAnalysis candidates[RECON_FIRST_LOCK_VOTE_COUNT];
+    uint32_t valid_count = 0u;
+    for (uint32_t i = 0u; i < RECON_FIRST_LOCK_VOTE_COUNT; ++i) {
+        ReconAnalysis sample;
+        if (Recon_Capture(&sample) && sample.valid && sample.f0_hz > 0.0f) {
+            candidates[valid_count++] = sample;
+        }
+        HAL_Delay(RECON_FIRST_LOCK_GAP_MS);
+    }
+    if (valid_count == 0u) {
+        return 0;
+    }
+
+    uint32_t best_index = 0u;
+    uint32_t best_votes = 0u;
+    for (uint32_t i = 0u; i < valid_count; ++i) {
+        uint32_t votes = 0u;
+        float tolerance = candidates[i].f0_hz * 0.01f;
+        if (tolerance < 8.0f) tolerance = 8.0f;
+        for (uint32_t j = 0u; j < valid_count; ++j) {
+            if (fabsf(candidates[j].f0_hz - candidates[i].f0_hz) <= tolerance) {
+                votes++;
+            }
+        }
+        if (votes > best_votes) {
+            best_votes = votes;
+            best_index = i;
+        }
+    }
+
     recon_dds_init();
-    return Recon_LoadCurrent(lut, pll, last_tick, 0, 0, 0.53, 0.05, 0);
+    printf("RECON first-lock vote valid=%lu best=%lu f0=%.2f\r\n",
+           (unsigned long)valid_count, (unsigned long)best_votes,
+           (double)candidates[best_index].f0_hz);
+    return Recon_LoadAnalysis(lut, &candidates[best_index], pll, last_tick,
+                              RECON_PLL_ACQUIRE_KP, RECON_PLL_ACQUIRE_KI);
 }
 
 static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
@@ -367,50 +472,41 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
 {
     ReconAnalysis analysis;
 
-    extern volatile uint8_t g_recon_rebuild_request;
-    extern volatile uint8_t g_recon_debug_request;
-    UART_Poll();
-    if (g_recon_debug_request) {
-        g_recon_debug_request = 0u;
-        Recon_PrintDebugChain(s_last_recon_valid ? &s_last_recon_analysis : 0, s_last_recon_used);
-        HAL_Delay(20);
-        return;
-    }
-
-    if (g_recon_rebuild_request) {
-        g_recon_rebuild_request = 0u;
-        printf("=== RECON_REBUILD_START ===\r\n");
-        if (!Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.53, 0.05,
-                               "=== RECON_REBUILD_DONE")) {
-            printf("=== RECON_REBUILD_FAILED ===\r\n");
-        }
-        HAL_Delay(50);
-        return;
-    }
+    // UART_Poll handles state machine transitions now.
+    // Removed old ASCII debug hooks.
 
     if (!Recon_Capture(&analysis)) {
         printf("RECON_WAIT input_invalid\r\n");
         s_recon_auto_change_count = 0u;
-        HAL_Delay(50);
+        HAL_Delay(RECON_INVALID_RETRY_MS);
         return;
     }
 
     const char *change_reason = Recon_InputChangeReason(&analysis);
+#if RECON_AUTO_REBUILD_ENABLE
     if (change_reason != 0) {
         s_recon_auto_change_count++;
         if (s_recon_auto_change_count >= RECON_AUTO_REBUILD_CONFIRM) {
             printf("=== RECON_AUTO_REBUILD_START reason=%s f0=%.2f ===\r\n",
                    change_reason, (double)analysis.f0_hz);
-            if (!Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.53, 0.05,
+            if (!Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0,
+                                   RECON_PLL_TRACK_KP, RECON_PLL_TRACK_KI,
                                    "=== RECON_AUTO_REBUILD_DONE")) {
                 printf("=== RECON_AUTO_REBUILD_FAILED ===\r\n");
             }
-            HAL_Delay(50);
+            HAL_Delay(RECON_REBUILD_SETTLE_MS);
             return;
         }
     } else {
         s_recon_auto_change_count = 0u;
     }
+#else
+    /* The input parameters are fixed after RECON is started.  Do not rebuild
+     * from a transient f0/harmonic estimate; only the PLL should track the
+     * already learned waveform model. */
+    (void)change_reason;
+    s_recon_auto_change_count = 0u;
+#endif
 
     extern volatile uint32_t g_adc_start_dwt;
     uint32_t now = g_adc_start_dwt;
@@ -420,29 +516,50 @@ static void Recon_RunPllTick(uint16_t *lut, ReconPll *pll, uint32_t *last_tick,
     }
     *last_tick = now;
 
-    if (analysis.input_vpp < 0.05f || fabs(pll->last_error) > 1.5) {
+    /* In hold state the DDS frequency is already fixed to the measured
+     * center.  For square/filtered-square inputs the phase DFT can wander
+     * even while the period is correct, so it must not trigger a relock. */
+    if (RECON_RELOCK_ENABLE && !pll->locked_hold &&
+        (analysis.input_vpp < 0.05f || fabs(pll->last_error) > 1.5)) {
         (*relock_count)++;
     } else {
         *relock_count = 0u;
     }
 
-    if (*relock_count >= 50u) {
+    if (RECON_RELOCK_ENABLE && *relock_count >= RECON_RELOCK_BAD_COUNT) {
         printf("RECON PLL relock\r\n");
-        (void)Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0, 0.5, 0.02, 0);
-        HAL_Delay(50);
+        (void)Recon_LoadCurrent(lut, pll, last_tick, relock_count, center_f0,
+                                RECON_PLL_ACQUIRE_KP, RECON_PLL_ACQUIRE_KI, 0);
+        HAL_Delay(RECON_REBUILD_SETTLE_MS);
         return;
     }
 
     if (*center_f0 < 0.0 || fabs(analysis.f0_hz - *center_f0) > 50.0) {
+        /* A single bad zero-crossing estimate must not retune the DDS.
+         * Recon_InputChangeReason() above requires consecutive confirmation
+         * before rebuilding for a real input-frequency change. */
+        if (*center_f0 >= 0.0) {
+            return;
+        }
         *center_f0 = analysis.f0_hz;
         pll->integral = 0.0;
     }
 
     uint32_t ftw = recon_pll_update(pll, *center_f0, analysis.fundamental_phase_rad, dt);
+    
+    // 串口打印实时 PLL 调试数据 (发往串口助手)
     if (ftw != 0u) {
         recon_dds_update_ftw(ftw);
     }
-    HAL_Delay(50);
+    printf("RECON PLL f0=%.2f out=%.6f corr=%.5fHz err=%.4fdeg ftw=%lu relock=%lu hold=%u\r\n",
+           (double)(*center_f0),
+           pll->last_actual_freq,
+           pll->phase_rate_hz,
+           pll->last_error * 57.295779513,
+           (unsigned long)g_recon_dds_ftw,
+           (unsigned long)(*relock_count),
+           (unsigned)pll->locked_hold);
+    // 移除导致 PLL 严重降速失锁的延时
 }
 
 
@@ -683,7 +800,7 @@ void Sweep_DebugSelfTest(void)
             recon_dds_init();
             if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
                 recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
-                recon_dds_start(analysis.f0_hz);
+                recon_dds_start_phase(analysis.f0_hz, analysis.fundamental_phase_rad);
                 Recon_PrintLutStats(recon_lut, RECON_TABLE_LEN, used);
                 started = 1;
             }
@@ -714,8 +831,10 @@ void Sweep_DebugSelfTest(void)
             if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
                 recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
                 // 鐜板湪鎴戜滑鏈変簡绮剧‘鐨勬椂闂存埑锛屽姞涓婇鐜囧钩婊戞护娉紝浣跨敤鏌斿拰鐨勫弬鏁板嵆鍙ǔ绋抽攣浣忥紒
-                recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.53, 0.05);
-                recon_dds_start(analysis.f0_hz);
+                recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad,
+                               RECON_PLL_STAGE14_INIT_KP,
+                               RECON_PLL_STAGE14_INIT_KI);
+                recon_dds_start_phase(analysis.f0_hz, analysis.fundamental_phase_rad);
                 last_tick = DWT->CYCCNT;
                 Recon_PrintLutStats(recon_lut, RECON_TABLE_LEN, used);
                 started = 1;
@@ -741,13 +860,15 @@ void Sweep_DebugSelfTest(void)
                 relock_count = 0u;
             }
 
-            if (relock_count >= 50u) { // 缁?PLL 鍏呰冻鐨勬椂闂?(50甯?1绉? 鍘绘敹鏁涳紝涓嶈棰戠箒鎵撴柇瀹?
+            if (relock_count >= RECON_PLL_STAGE14_BAD_COUNT) {
                 printf("RECON PLL relock\r\n");
                 if (Recon_BuildCurrent(recon_lut, &analysis, &used)) {
                     recon_dds_load_lut(recon_lut, RECON_TABLE_LEN);
                     // 鏃㈢劧绉垎 Bug 宸茬粡淇ソ浜嗭紝鐜板湪鍙互鐢ㄦ洿婵€杩涚殑鍙傛暟绉掗攣鐩革紒
-                    recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad, 0.5, 0.02);
-                    recon_dds_start(analysis.f0_hz);
+                    recon_pll_init(&pll, analysis.f0_hz, analysis.fundamental_phase_rad,
+                                   RECON_PLL_STAGE14_RELOCK_KP,
+                                   RECON_PLL_STAGE14_RELOCK_KI);
+                    recon_dds_start_phase(analysis.f0_hz, analysis.fundamental_phase_rad);
                     relock_count = 0u;
                 }
             } else {
@@ -772,7 +893,7 @@ void Sweep_DebugSelfTest(void)
                        (unsigned long)relock_count);
             }
         }
-        HAL_Delay(50);
+        HAL_Delay(RECON_PLL_STAGE14_LOOP_DELAY_MS);
     }
 #elif (DEBUG_STAGE == 15)
     {
@@ -874,57 +995,143 @@ int main(void)
   AD9833_Init();
   FFT_Init();
 
-#ifdef DEBUG_SWEEP
-  adc_sync_init();        // ADC 鏍″噯 (妯″潡2/3/5 闇€瑕?
+  adc_sync_init();
   sweep_engine_init();
-#endif
+  recon_dds_init();
+  Recon_EnableDwt();
 
-  /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
-  // AD9833_Init();
-  // AD9833_SetAmplitude(200);
-  // AD9833_SetPhase(PHASE_REG_0, 180.0f);
-  // AD9833_SetFixedOutput(10000, WAVE_SINE);
-  // int k=1;
 
-  /* SI5351 Output Test */
-  // si5351_Init();
-  // si5351_set_freq(2, 409600); // 10.240 KHz output using robust dynamic fraction/r_div calculate
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+  // States definition matches UARTTX.c
+  #define CMD_NONE      0
+  #define CMD_RESET     1
+  #define CMD_LEARN     2
+  #define CMD_RECON     3
+  #define CMD_SET_FREQ  4
+  #define CMD_SET_AMP   5
+  
+  extern volatile uint8_t g_serial_cmd_id;
+  extern volatile uint32_t g_target_freq;
+  extern volatile float g_target_vpp;
+
+  extern void UART_Poll(void);
+  extern void lcd_cmd(const char *fmt, ...);
+
+  uint8_t current_state = CMD_NONE;
+
+  // Recon variables
+  static uint16_t recon_lut[RECON_TABLE_LEN];
+  static ReconPll pll;
+  static uint32_t last_tick = 0;
+  static uint32_t relock_count = 0;
+  static double center_f0 = -1.0;
+  static uint8_t recon_ready = 0u;
+
   while (1)
   {
-#ifdef DEBUG_SWEEP
-    Sweep_DebugSelfTest();
-#elif (DEBUG_STAGE == 6)
-    printf("=== STAGE 6: 蹇€熸煡楠?ADC 寮曡剼 (PC4 涓?PB0) ===\r\n");
-    printf("璇风敤鎵嬭Е鎽稿紩鑴氾紝鎴栨帴 3.3V / GND锛岃瀵熷搴旀暟鍊煎彉鍖?(0~4095)\r\n");
-    
-    adc_sync_init();
-    
-    // 寮哄埗寮€鍚?TIM4锛屼互澶ф 10kHz 棰戠巼瑙﹀彂 ADC
-    extern TIM_HandleTypeDef htim4;
-    __HAL_TIM_SET_PRESCALER(&htim4, 0);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, 24000 - 1); 
-    HAL_TIM_Base_Start(&htim4);
+      UART_Poll();
 
-    while (1) {
-        uint16_t c1[10], c2[10];
-        
-        // acq_get_window 鍐呴儴浼氳Е鍙?ADC 閲囬泦骞堕樆濉炵瓑寰呭畬鎴?
-        acq_get_window(c1, c2, 10);
-        
-        // 鍙栫涓€涓噰鏍风偣鐨勫€兼墦鍗板嵆鍙紝瓒冲鍒ゆ柇楂樹綆鐢靛钩
-        printf("PC4(鐞嗗簲鏄疌H1) = %4d   |   PB0(鐞嗗簲鏄疌H2) = %4d\r\n", c1[0], c2[0]);
-        HAL_Delay(200); // 1绉掓墦鍗?5 娆★紝鏂逛究鑲夌溂鐪?
-    }
-
+      // Handle State Transitions
+      if (g_serial_cmd_id != CMD_NONE) {
+          uint8_t incoming_cmd = g_serial_cmd_id;
+          g_serial_cmd_id = CMD_NONE;
+          
+          if (incoming_cmd == CMD_RESET) {
+              // Stop everything
+              AD9833_SetFixedOutput(0, WAVE_SINE);
+              recon_dds_stop();
+              recon_ready = 0u;
+              g_uart_debug_quiet = 0u;
+              current_state = CMD_NONE;
+          }
+          else if (incoming_cmd == CMD_LEARN) {
+              /* USART1 is connected to the Nextion screen. Do not send the
+               * sweep CSV/debug text into the screen RX buffer. */
+              g_uart_debug_quiet = RECON_PC_DEBUG ? 0u : 1u;
+              // Perform sweep and build table
+              AD9833_SetAmplitude(200);
+              g_dds_external = 0; // Use AD9833 as source
+              sweep_engine_run(100.0f, 1000000.0f);
+              
+              FullChain_PrintHTable();
+              FullChain_PrintFilterAnalysis();
+              
+              // 扫频结束后，关闭 AD9833 输出，防止干扰后续操作
+              AD9833_SetAmplitude(0);
+              AD9833_SetFixedOutput(0, WAVE_SINE);
+              
+              // Analyze filter and send to t0
+              FilterAnalysis analysis;
+              if (sweep_analyze(&analysis)) {
+                  switch (analysis.type) {
+#if !RECON_PC_DEBUG
+                      case FILT_LP: lcd_cmd("t0.txt=\"LP\""); break;
+                      case FILT_HP: lcd_cmd("t0.txt=\"HP\""); break;
+                      case FILT_BP: lcd_cmd("t0.txt=\"BP\""); break;
+                      case FILT_BS: lcd_cmd("t0.txt=\"BS\""); break;
+                      default:      lcd_cmd("t0.txt=\"UNKNOWN\""); break;
 #else
-    UART_Poll();
+                      case FILT_LP: case FILT_HP: case FILT_BP: case FILT_BS: break;
+                      default: break;
 #endif
+                  }
+              } else {
+#if !RECON_PC_DEBUG
+                  lcd_cmd("t0.txt=\"UNKNOWN\"");
+#endif
+              }
+              current_state = CMD_NONE;
+          }
+          else if (incoming_cmd == CMD_RECON) {
+              // Initialize Reconstruction
+              Recon_EnableDwt();
+              center_f0 = -1.0;
+              relock_count = 0u;
+              recon_ready = 0u;
+              current_state = CMD_RECON; // retry initialization in the state loop
+          }
+          else if (incoming_cmd == CMD_SET_FREQ) {
+              // Update freq and apply known model open-loop compensation
+              KnownModel_Update(g_target_freq, g_target_vpp);
+              // does not change current_state
+          }
+          else if (incoming_cmd == CMD_SET_AMP) {
+              // Update target amplitude and apply known model open-loop compensation
+              KnownModel_Update(g_target_freq, g_target_vpp);
+              // does not change current_state
+          }
+      }
+
+      // Handle State Execution
+      if (current_state == CMD_RECON) {
+          if (!recon_ready) {
+              center_f0 = -1.0;
+              relock_count = 0u;
+              if (Recon_StartPllFromCurrentInput(recon_lut, &pll, &last_tick)) {
+                  /* Keep the voted first-lock frequency as the PLL center.
+                   * Otherwise the first runtime tick reinitializes center_f0
+                   * from a new, possibly quantized/noisy measurement. */
+                  center_f0 = pll.last_actual_freq;
+                  recon_ready = 1u;
+                  printf("=== RECON_READY first_lock_init ===\r\n");
+                  /* From here USART1 carries only the LCD protocol. */
+                  g_uart_debug_quiet = RECON_PC_DEBUG ? 0u : 1u;
+              } else {
+                  printf("RECON_INIT_RETRY\r\n");
+                  HAL_Delay(RECON_INVALID_RETRY_MS);
+              }
+          } else {
+              Recon_RunPllTick(recon_lut, &pll, &last_tick, &relock_count, &center_f0);
+          }
+      }
+      
     /* USER CODE END WHILE */
+
 
     /* USER CODE BEGIN 3 */
   }

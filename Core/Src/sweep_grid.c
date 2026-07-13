@@ -2,6 +2,7 @@
 #include "sweep_engine.h"
 #include <math.h>
 #include <stdio.h>
+#define printf(...)
 
 static float clampf_local(float x, float lo, float hi)
 {
