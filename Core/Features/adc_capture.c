@@ -2,7 +2,7 @@
 // Created by Lenovo on 2026/2/20.
 //
 #include <adc.h>
-#include "ADCTask.h"
+#include "adc_capture.h"
 #include "tim.h"
 
 uint8_t start_adc_flag = 0;

@@ -1,7 +1,7 @@
 // UARTTX.c
-#include "MSG.h"
+#include "msg_def.h"
 #include "usart.h"
-#include "protocol.h"
+#include "vofa_protocol.h"
 
 uint8_t msg_ready = 0;
 APP_Text current_msg;

@@ -3,8 +3,8 @@
 //
 
 
-#include "DDS.h"
-#include "MSG.h"
+#include "dac_dds.h"
+#include "msg_def.h"
 
 uint8_t g_is_adc_continuous = 1;
 

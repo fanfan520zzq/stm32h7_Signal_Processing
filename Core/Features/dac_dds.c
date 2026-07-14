@@ -2,7 +2,7 @@
 // Created by Lenovo on 2026/2/17.
 //
 
-#include "DDS.h"
+#include "dac_dds.h"
 
 
 static int16_t SinBuffer[1024],SquBuffer[1024],TriBuffer[1024];

@@ -1,5 +1,5 @@
 // protocol.c
-#include "protocol.h"
+#include "vofa_protocol.h"
 
 
 //MODEBUS - CRC

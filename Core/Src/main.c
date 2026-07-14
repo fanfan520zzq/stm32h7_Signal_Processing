@@ -30,12 +30,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "DDS.h"
-#include "MSG.h"
+#include "dac_dds.h"
+#include "msg_def.h"
 #include "si5351.h" // Include SI5351 driver
 #include "ad9833_hal.h"
-#include "ADCTask.h"
-#include "Measure.h" // ADDED: include Measure for Goertzel functions
+#include "adc_capture.h"
+#include "measure.h" // ADDED: include Measure for Goertzel functions
 #include <stdio.h>
 #include <string.h>
 #include <math.h>

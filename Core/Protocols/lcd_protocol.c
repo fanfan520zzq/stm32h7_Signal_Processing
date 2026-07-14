@@ -1,4 +1,4 @@
-#include "LCD.h"
+#include "lcd_protocol.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>

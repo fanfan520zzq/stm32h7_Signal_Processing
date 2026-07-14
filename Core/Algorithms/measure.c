@@ -2,9 +2,9 @@
 // Created by Lenovo on 2026/5/1.
 //
 
-#include "Measure.h"
-#include "DDS.h"
-#include "ADCTask.h"
+#include "measure.h"
+#include "dac_dds.h"
+#include "adc_capture.h"
 #include "ad9833_hal.h"
 #include <math.h>
 #include <string.h>

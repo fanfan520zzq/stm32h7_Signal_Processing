@@ -40,16 +40,6 @@ set(DSP_LIB_FILE "${CMAKE_SOURCE_DIR}/Middlewares/ST/ARM/DSP/Lib/libarm_cortexM7
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
-        Core/Task/LCD.c
-        Core/Task/LCD.h
-        Core/Algorithm/lttb.c
-        Core/Algorithm/lttb.h
-        Core/Algorithm/protocol.c
-        Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
-
-
 )
 
 # Add STM32CubeMX generated sources
@@ -63,31 +53,31 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
-        Core/Src/Measure.c
-        Core/Src/Measure.h
-        Core/Task/MSG.h
-        Core/Task/UARTTX.c
-        Core/Task/CMD.c
-        Core/Task/DDS.c
-        Core/Task/DDS.h
+        Core/Algorithms/measure.c
+        Core/Algorithms/measure.h
+        Core/Protocols/msg_def.h
+        Core/Protocols/uart_protocol.c
+        Core/Features/msg_handler.c
+        Core/Features/dac_dds.c
+        Core/Features/dac_dds.h
 
-        Core/Task/ADCTask.c
-        Core/Task/ADCTask.h
+        Core/Features/adc_capture.c
+        Core/Features/adc_capture.h
 
-        Core/Task/FFTTask.c
-        Core/Task/FFTTask.h
+        Core/Algorithms/fft_analysis.c
+        Core/Algorithms/fft_analysis.h
 
 
-        Core/Task/LCD.c
-        Core/Task/LCD.h
-        Core/Algorithm/lttb.c
-        Core/Algorithm/lttb.h
-        Core/Algorithm/protocol.c
-        Core/Algorithm/protocol.h
-        Core/si5351/si5351.c
-        Core/si5351/si5351.h
-        Core/AD9833/ad9833_hal.c
-        Core/AD9833/ad9833_hal.h
+        Core/Protocols/lcd_protocol.c
+        Core/Protocols/lcd_protocol.h
+        Core/Algorithms/lttb.c
+        Core/Algorithms/lttb.h
+        Core/Protocols/vofa_protocol.c
+        Core/Protocols/vofa_protocol.h
+        Core/BSP/si5351/si5351.c
+        Core/BSP/si5351/si5351.h
+        Core/BSP/AD9833/ad9833_hal.c
+        Core/BSP/AD9833/ad9833_hal.h
 )
 
 
@@ -97,14 +87,18 @@ file(GLOB DSP_LIB "${CMAKE_SOURCE_DIR}/Middlewares/ST/ARM/DSP/Lib/*.a")
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
-        Core/Task
         Core/Inc
-        Core/Algorithm
-        Core/AD9833
+        Core/BSP/si5351
+        Core/BSP/AD9833
+        Core/Algorithms
+        Core/Protocols
+        Core/Features
+        Core/Services
+        Core/Drivers
+        Core/Profiles
         Drivers/CMSIS/DSP/Include
         Drivers/CMSIS/Include
         Middlewares/ST/ARM/DSP/Inc
-    Core/si5351
 )
 
 # Add project symbols (macros)

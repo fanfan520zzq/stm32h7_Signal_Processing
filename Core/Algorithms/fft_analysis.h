@@ -8,9 +8,9 @@
 #ifndef IIT6_OSCILLISCOPE_FFTTASK_H
 #define IIT6_OSCILLISCOPE_FFTTASK_H
 
-#include "ADCTask.h"
-#include "MSG.h"
-#include "LCD.h"   /* Provides SINE / SQUARE / TRIANGLE / DC */
+#include "adc_capture.h"
+#include "msg_def.h"
+#include "lcd_protocol.h"   /* Provides SINE / SQUARE / TRIANGLE / DC */
 
 /* -----------------------------------------------------------------------
  * Public types
