@@ -110,9 +110,10 @@ int32_t Clock_Service_SetDACFreq(uint8_t dac_channel, ClockSource_t src, uint32_
     HAL_TIM_Base_Stop(htim);
     
     if (src == CLOCK_SRC_EXTERNAL_SI5351) {
-        // User requested Scheme B, but basic timers TIM6/TIM7 cannot act as slaves in H7
-        // Return soft error or fallback to internal. We fallback to internal to not hardfault.
-        src = CLOCK_SRC_INTERNAL;
+        // TIM6/TIM7 cannot act as slaves. 
+        // We route the DAC trigger to TIM4 (which is also used for ADC).
+        // WARNING: This means DAC and ADC share TIM4 if both are active!
+        return Clock_Service_SetADCFreq(src, target_hz, actual_hz);
     }
     
     uint32_t psc = 0, arr = 0;

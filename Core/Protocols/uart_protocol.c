@@ -56,6 +56,18 @@ void UART_Poll(void) {
                             test_adc_len = len;
                             test_adc_flag = 1;
                             printf("ACK:ADC_TEST STARTED %d\r\n", len);
+                        } else if (strncmp(cmd_buf, "CMD:DDS_SET", 11) == 0) {
+                            int wave = 0, freq = 1000, vpp = 3300, bias = 1650, duty = 50;
+                            if (cmd_buf[11] == ',') {
+                                sscanf(&cmd_buf[12], "%d,%d,%d,%d,%d", &wave, &freq, &vpp, &bias, &duty);
+                            }
+                            test_dds_wave = wave;
+                            test_dds_freq = freq;
+                            test_dds_vpp  = vpp;
+                            test_dds_bias = bias;
+                            test_dds_duty = duty;
+                            test_dds_flag = 1;
+                            printf("ACK:DDS_SET %d,%d,%d,%d,%d\r\n", wave, freq, vpp, bias, duty);
                         } else if (cmd_buf[0] >= 32 && cmd_buf[0] <= 126) {
                             printf("ACK:UNKNOWN %s\r\n", cmd_buf);
                         }

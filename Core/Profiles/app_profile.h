@@ -34,4 +34,11 @@ void App_Poll(void);
 extern volatile uint8_t test_adc_flag;
 extern volatile uint32_t test_adc_len;
 
+extern volatile uint8_t  test_dds_flag;
+extern volatile uint8_t  test_dds_wave;
+extern volatile uint32_t test_dds_freq;
+extern volatile uint16_t test_dds_vpp;
+extern volatile uint16_t test_dds_bias;
+extern volatile uint8_t  test_dds_duty;
+
 #endif /* APP_PROFILE_H */

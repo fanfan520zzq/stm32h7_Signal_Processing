@@ -37,10 +37,11 @@ void CMD_Poll(void) {
         APP_Text* MSG = &current_msg;
         switch (MSG->op) {
             case DAC1_UPDATE:{
-                 DDS1_Update_DATA(MSG->Freq,MSG->VPP,MSG->WaveType);  break;
+                 DDS_SetParam(MSG->WaveType, MSG->Freq, MSG->VPP, 1650, 50);  break;
             }
             case DAC2_UPDATE: {
-                 DDS2_Update_DATA(MSG->Freq,MSG->VPP,MSG->WaveType);  break;
+                 // DDS2_Update_DATA(MSG->Freq,MSG->VPP,MSG->WaveType);  
+                 break;
             }
             case DAC1_RELEASE: {
                  HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);

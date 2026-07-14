@@ -3,6 +3,7 @@
 #include "si5351.h"
 #include "clock_service.h"
 #include "adc_capture.h"
+#include "dac_dds.h"
 
 // External module functions
 extern void CMD_Init(void);
@@ -42,6 +43,14 @@ void App_Init(void) {
 volatile uint8_t test_adc_flag = 0;
 volatile uint32_t test_adc_len = 1024;
 
+volatile uint8_t  test_dds_flag = 0;
+volatile uint8_t  test_dds_wave = 0;
+volatile uint32_t test_dds_freq = 1000;
+volatile uint16_t test_dds_vpp  = 3300;
+volatile uint16_t test_dds_bias = 1650;
+volatile uint8_t  test_dds_duty = 50;
+static uint8_t dds_initialized = 0;
+
 void App_Poll(void) {
     switch (current_profile) {
         case PROFILE_IDLE:
@@ -69,6 +78,16 @@ void App_Poll(void) {
                     }
                     printf("ADC_DATA_END\r\n");
                 }
+            }
+
+            if (test_dds_flag == 1) {
+                test_dds_flag = 0;
+                if (!dds_initialized) {
+                    DDS_Init();
+                    DDS_Start();
+                    dds_initialized = 1;
+                }
+                DDS_SetParam(test_dds_wave, test_dds_freq, test_dds_vpp, test_dds_bias, test_dds_duty);
             }
 
             break;

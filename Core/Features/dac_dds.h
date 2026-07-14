@@ -8,22 +8,20 @@
 #include "main.h"
 #include "tim.h"
 #include <math.h>
-
 #include "dac.h"
 
-#define DDS_TIM 1000000.0f //1MHz
+// Waveform types
+#define DDS_WAVE_SINE     0
+#define DDS_WAVE_SQUARE   1
+#define DDS_WAVE_TRIANGLE 2
 
-extern uint16_t Buffer1[1024];
-extern uint16_t Buffer2[1024];
+// External buffers
+extern uint16_t dds_dma_buf[2000];
 
-
+// Public API
 void DDS_Init(void);
-void DDS1_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType);
-void DDS2_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType);
-void DDS1_Start(void);
-void DDS2_Start(void);
+void DDS_Start(void);
 void DDS_Stop(void);
-
-
+void DDS_SetParam(uint8_t waveType, uint32_t freq_hz, uint16_t vpp_mv, uint16_t bias_mv, uint8_t duty_cycle);
 
 #endif //ITVM_DDS_DDS_H
