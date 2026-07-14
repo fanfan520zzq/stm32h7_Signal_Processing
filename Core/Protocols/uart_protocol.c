@@ -1,8 +1,8 @@
-// UARTTX.c
 #include "msg_def.h"
 #include "usart.h"
 #include "vofa_protocol.h"
 #include "module_state.h"
+#include "app_profile.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -48,6 +48,14 @@ void UART_Poll(void) {
                     if (cmd_idx > 0) {
                         if (strncmp(cmd_buf, "CMD:PING", 8) == 0) {
                             printf("ACK:PONG\r\n");
+                        } else if (strncmp(cmd_buf, "CMD:ADC_TEST", 12) == 0) {
+                            int len = 1024;
+                            if (cmd_buf[12] == ',') {
+                                sscanf(&cmd_buf[13], "%d", &len);
+                            }
+                            test_adc_len = len;
+                            test_adc_flag = 1;
+                            printf("ACK:ADC_TEST STARTED %d\r\n", len);
                         } else if (cmd_buf[0] >= 32 && cmd_buf[0] <= 126) {
                             printf("ACK:UNKNOWN %s\r\n", cmd_buf);
                         }

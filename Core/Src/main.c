@@ -80,16 +80,7 @@ extern void FFT_Poll(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void ADC_DebugPrint_Dual(uint32_t psc, uint32_t arr, uint32_t length) {
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(psc, arr, length);
-    if (res.ch1 && res.ch2) {
-        for (uint32_t i = 0; i < res.length; i++) {
-             printf("%u,%u\n", res.ch1[i], res.ch2[i]);
-             // Add tiny delay if large prints drown your serial
-             // HAL_Delay(1);
-        }
-    }
-}
+
 /* USER CODE END 0 */
 
 /**

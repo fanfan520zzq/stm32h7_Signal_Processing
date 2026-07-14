@@ -19,7 +19,11 @@ typedef struct {
 extern uint16_t CH1_Buffer[LEN];
 extern uint16_t CH2_Buffer[LEN];
 
-ADC_DualResult_t ADC_SampleOnce_TIM4(uint32_t psc, uint32_t arr, uint32_t length);
+#include "clock_service.h"
+
+void ADC_Capture_StartSingle(ClockSource_t src, uint32_t target_hz, uint32_t length);
+uint8_t ADC_Capture_IsComplete(void);
+ADC_DualResult_t ADC_Capture_GetResult(void);
 
 #endif //IIT6_OSCILLISCOPE_ADC_H
 

@@ -3,6 +3,7 @@
 //
 
 #include "dac_dds.h"
+#include "clock_service.h"
 
 
 static int16_t SinBuffer[1024],SquBuffer[1024],TriBuffer[1024];
@@ -36,9 +37,13 @@ void DDS_Init(void)
 void DDS1_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
 
+    uint32_t actual_hz = 1000000;
+    Clock_Service_SetDACFreq(1, CLOCK_SRC_INTERNAL, 1000000, &actual_hz);
+    float dds_tim = (float)actual_hz;
+
     phase_index1=0;
-    FTW1=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer1_Len = (uint32_t)(DDS_TIM / freq);
+    FTW1=(uint32_t)(freq)*(4294967296.0f)/dds_tim; //2^32=4294967296
+    Buffer1_Len = (uint32_t)(dds_tim / freq);
 
     float scale = (float)vpp / 1000.0f;
     for(int i=0;i<Buffer1_Len;i++){
@@ -66,9 +71,13 @@ void DDS1_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
 void DDS2_Update_DATA(uint16_t freq,uint16_t vpp,uint8_t waveType){//vpp 0-1000
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
 
+    uint32_t actual_hz = 1000000;
+    Clock_Service_SetDACFreq(2, CLOCK_SRC_INTERNAL, 1000000, &actual_hz);
+    float dds_tim = (float)actual_hz;
+
     phase_index2=0;
-    FTW2=(uint32_t)(freq)*(4294967296.0f)/DDS_TIM; //2^32=4294967296
-    Buffer2_Len=(uint32_t)(DDS_TIM / freq);
+    FTW2=(uint32_t)(freq)*(4294967296.0f)/dds_tim; //2^32=4294967296
+    Buffer2_Len=(uint32_t)(dds_tim / freq);
 
     float scale = (float)vpp / 1000.0f;
     for(int i=0;i<Buffer2_Len;i++){

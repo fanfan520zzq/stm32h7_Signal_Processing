@@ -1,6 +1,8 @@
 #include "app_profile.h"
 #include <stdio.h>
 #include "si5351.h"
+#include "clock_service.h"
+#include "adc_capture.h"
 
 // External module functions
 extern void CMD_Init(void);
@@ -30,10 +32,15 @@ void App_Init(void) {
         } else {
             printf("LOG:ERROR SI5351 init failed (I2C missing?).\r\n");
         }
+        
+        Clock_Service_Init();
     } else if (current_profile == PROFILE_IDLE) {
         printf("LOG:INFO System Initialized. Profile: IDLE\r\n");
     }
 }
+
+volatile uint8_t test_adc_flag = 0;
+volatile uint32_t test_adc_len = 1024;
 
 void App_Poll(void) {
     switch (current_profile) {
@@ -46,6 +53,24 @@ void App_Poll(void) {
             // ASCII fallback (CMD:PING) and binary VOFA frame check are now inside UART_Poll
             UART_Poll(); // Read binary protocol and ASCII loopback
             CMD_Poll();  // Execute commands
+
+            if (test_adc_flag == 1) {
+                test_adc_flag = 2; // Waiting for completion
+                // Start ADC Capture using SI5351 external clock, 1.024MHz
+                ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 1024000, test_adc_len);
+            } else if (test_adc_flag == 2) {
+                if (ADC_Capture_IsComplete()) {
+                    test_adc_flag = 0; // Test finished
+                    ADC_DualResult_t res = ADC_Capture_GetResult();
+                    printf("ADC_DATA_START\r\n");
+                    for (uint32_t i = 0; i < res.length; i++) {
+                        printf("%u,%u\r\n", res.ch1[i], res.ch2[i]);
+                        if (i % 32 == 0) HAL_Delay(1); // prevent UART buffer overflow
+                    }
+                    printf("ADC_DATA_END\r\n");
+                }
+            }
+
             break;
         }
 

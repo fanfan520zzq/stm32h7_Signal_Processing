@@ -39,30 +39,30 @@ void ADC_Poll(void) {
     }
 }
 
-ADC_DualResult_t ADC_SampleOnce_TIM4(uint32_t psc, uint32_t arr, uint32_t length) {
-    ADC_DualResult_t result = {NULL, NULL, 0};
+#include "clock_service.h"
 
+void ADC_Capture_StartSingle(ClockSource_t src, uint32_t target_hz, uint32_t length) {
     if (length == 0 || length > LEN) {
         length = LEN;
     }
 
     g_adc_len = length;
-
     adc1_ready = 0;
     adc2_ready = 0;
     fft_ready_flag = 0;
 
-    HAL_TIM_Base_Stop(&htim4);
-    __HAL_TIM_SET_PRESCALER(&htim4, psc);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, arr);
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
+    uint32_t actual_hz = 0;
+    Clock_Service_SetADCFreq(src, target_hz, &actual_hz);
 
     Start_Sample();
+}
 
-    while (!fft_ready_flag) {
-        __NOP();
-    }
+uint8_t ADC_Capture_IsComplete(void) {
+    return fft_ready_flag;
+}
 
+ADC_DualResult_t ADC_Capture_GetResult(void) {
+    ADC_DualResult_t result;
     result.ch1 = CH1_Buffer;
     result.ch2 = CH2_Buffer;
     result.length = g_adc_len;

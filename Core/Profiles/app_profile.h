@@ -31,4 +31,7 @@ void App_Init(void);
  */
 void App_Poll(void);
 
+extern volatile uint8_t test_adc_flag;
+extern volatile uint32_t test_adc_len;
+
 #endif /* APP_PROFILE_H */
