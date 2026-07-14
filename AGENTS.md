@@ -34,3 +34,11 @@
 - Use heap allocations for incoming UART commands (see `pvPortMalloc` in `UARTTX.c`) and remember to free or recycle if you add long-lived control messages.
 - Any new public message opcode belongs in `MSG.h` so the UART parser and CMD task stay in sync; keep opcodes aligned with the README frame table.
 
+## AI Development Constraints
+- Read `AI_DEVELOPMENT_RULES.md` before making implementation changes.
+- Prefer local ST official materials under `C:\Users\Lenovo\STM32Cube\Repository`, especially H7 `Templates_LL` and `Examples_LL`, together with the manuals in `ref_doc`.
+- When an official PDF, example, or driver source materially informs a module, add a module Markdown note with the exact source path, chapter/section/page or example path, symbol/register, applicability, and verification status.
+- Treat direct official references as evidence level A; current-board verification as B; reviewed-but-unverified material as C; AI-only material as D.
+- After each accepted refactoring stage, build, run the agreed hardware checks, update the verification record, create a Git commit/tag, and prepare the stable result for import into `D:\ZYNQ32_MEMRAX`.
+- Do not guess OpenOCD, debugger, serial-port, board-reset, or ELF-path settings. Use the project's command manuals when they are added.
+

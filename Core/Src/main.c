@@ -37,6 +37,7 @@
 #include "ADCTask.h"
 #include "Measure.h" // ADDED: include Measure for Goertzel functions
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 /* USER CODE END Includes */
 
@@ -67,6 +68,7 @@ void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 extern void UART1_Receive_Start(void);
+extern uint8_t UART1_Read_Byte(uint8_t *byte);
 extern void CMD_Init(void);
 extern void FFT_Init(void);
 extern void UART_Poll(void);
@@ -163,34 +165,32 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  uint8_t rx_byte;
+  char cmd_buf[32];
+  uint8_t cmd_idx = 0;
+
+  printf("LOG:INFO System Initialized. Stage -1 Loopback Ready.\r\n");
+
   while (1)
   {
-    // 假设目标频率为 10kHz，TIM4 使用 psc=239, arr=9 产生 100kHz 采样率 (若定时器时钟为 240MHz)
-    float target_freq = 1000.0f;
-    float sample_rate = 100000.0f;
-    
-    // 采样 2048 个点
-    ADC_DualResult_t res = ADC_SampleOnce_TIM4(239, 9, 2000);
-    
-    if (res.ch1 && res.ch2) {
-        // 计算两路相位
-        float phase1 = Goertzel_Phase(res.ch1, res.length, target_freq, sample_rate);
-        float phase2 = Goertzel_Phase(res.ch2, res.length, target_freq, sample_rate);
-        
-        // 计算相位差
-        float phase_diff = phase1 - phase2;
-        
-        // 处理相位卷绕，限制在 -PI 到 +PI 之间
-        while(phase_diff > 3.14159265f)  phase_diff -= 2.0f * 3.14159265f;
-        while(phase_diff < -3.14159265f) phase_diff += 2.0f * 3.14159265f;
-
-        float rad = phase_diff * 180 / 3.1415 ;
-        // 打印调试信息，可在串口助手观察
-        printf("P1: %.2f rad, P2: %.2f rad, Diff: %.2f rad\r\n", phase1, phase2, phase_diff);
-    }
-    
-    HAL_Delay(500); // 每0.5秒测一次，防止串口刷屏
-
+      if (UART1_Read_Byte(&rx_byte)) {
+          if (rx_byte == '\n' || rx_byte == '\r') {
+              cmd_buf[cmd_idx] = '\0';
+              if (cmd_idx > 0) {
+                  // process command
+                  if (strncmp(cmd_buf, "CMD:PING", 8) == 0) {
+                      printf("ACK:PONG\r\n");
+                  } else {
+                      printf("ACK:UNKNOWN %s\r\n", cmd_buf);
+                  }
+                  cmd_idx = 0;
+              }
+          } else {
+              if (cmd_idx < sizeof(cmd_buf) - 1) {
+                  cmd_buf[cmd_idx++] = rx_byte;
+              }
+          }
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
