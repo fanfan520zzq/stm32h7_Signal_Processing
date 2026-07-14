@@ -2,9 +2,22 @@
 #include "msg_def.h"
 #include "usart.h"
 #include "vofa_protocol.h"
+#include "module_state.h"
+#include <stdio.h>
+#include <string.h>
 
 uint8_t msg_ready = 0;
 APP_Text current_msg;
+static ModuleStatus_t uart_status = {MODULE_UNINIT, ERR_OK, 0};
+
+void UART_Proto_Init(void) {
+    uart_status.state = MODULE_READY;
+    uart_status.error_code = ERR_OK;
+}
+
+ModuleStatus_t UART_Proto_GetStatus(void) {
+    return uart_status;
+}
 
 void UART_Poll(void) {
     /* If previous message hasn't been processed by CMD_Poll, wait */
@@ -16,11 +29,35 @@ void UART_Poll(void) {
     static uint8_t raw[PROTO_LEN];
     static uint8_t idx = 0;
 
+    if (uart_status.state == MODULE_READY) {
+        uart_status.state = MODULE_RUNNING;
+    }
+
     while (UART1_Read_Byte(&byte)) {
         /* Wait for packet header */
         if (idx == 0) {
             if (byte == PROTO_HEADER) {
                 raw[idx++] = byte;
+            } else {
+                /* ASCII fallback for CMD:PING */
+                static char cmd_buf[32];
+                static uint8_t cmd_idx = 0;
+                
+                if (byte == '\n' || byte == '\r') {
+                    cmd_buf[cmd_idx] = '\0';
+                    if (cmd_idx > 0) {
+                        if (strncmp(cmd_buf, "CMD:PING", 8) == 0) {
+                            printf("ACK:PONG\r\n");
+                        } else if (cmd_buf[0] >= 32 && cmd_buf[0] <= 126) {
+                            printf("ACK:UNKNOWN %s\r\n", cmd_buf);
+                        }
+                        cmd_idx = 0;
+                    }
+                } else {
+                    if (cmd_idx < sizeof(cmd_buf) - 1) {
+                        cmd_buf[cmd_idx++] = byte;
+                    }
+                }
             }
             continue;
         }

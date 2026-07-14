@@ -614,7 +614,9 @@ err_t si5351_write8 (uint8_t reg, uint8_t value)
 {
 	HAL_StatusTypeDef status = HAL_OK;
   
-	while (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SI5351_ADDRESS<<1), 3, 100) != HAL_OK) { }
+	if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SI5351_ADDRESS<<1), 3, 100) != HAL_OK) {
+        return ERROR_I2C_DEVICENOTFOUND;
+    }
 
     status = HAL_I2C_Mem_Write(&hi2c1,							// i2c handle
     						  (uint8_t)(SI5351_ADDRESS<<1),		// i2c address, left aligned
@@ -636,7 +638,9 @@ err_t si5351_read8(uint8_t reg, uint8_t *value)
 {
 	HAL_StatusTypeDef status = HAL_OK;
 
-	while (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SI5351_ADDRESS<<1), 3, 100) != HAL_OK) { }
+	if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SI5351_ADDRESS<<1), 3, 100) != HAL_OK) {
+        return ERROR_I2C_DEVICENOTFOUND;
+    }
 
     status = HAL_I2C_Mem_Read(&hi2c1,							// i2c handle
     						  (uint8_t)(SI5351_ADDRESS<<1),		// i2c address, left aligned

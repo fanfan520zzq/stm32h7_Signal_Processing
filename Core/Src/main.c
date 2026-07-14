@@ -30,6 +30,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_profile.h"
 #include "dac_dds.h"
 #include "msg_def.h"
 #include "si5351.h" // Include SI5351 driver
@@ -136,18 +137,20 @@ int main(void)
   MX_TIM4_Init();
   MX_ADC2_Init();
   MX_TIM13_Init();
-  //MX_I2C1_Init();
+  MX_I2C1_Init();
   MX_SPI1_Init();
   MX_ADC3_Init();
-  //MX_I2C3_Init();
+  MX_I2C3_Init();
   MX_SPI2_Init();
   MX_TIM2_Init();
   MX_TIM5_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   UART1_Receive_Start();
-  CMD_Init();
-  FFT_Init();
+  
+  // Select and Initialize Profile
+  App_SelectProfile(PROFILE_UART_DEBUG);
+  App_Init();
 
   /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
   // AD9833_Init();
@@ -165,32 +168,9 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint8_t rx_byte;
-  char cmd_buf[32];
-  uint8_t cmd_idx = 0;
-
-  printf("LOG:INFO System Initialized. Stage -1 Loopback Ready.\r\n");
-
   while (1)
   {
-      if (UART1_Read_Byte(&rx_byte)) {
-          if (rx_byte == '\n' || rx_byte == '\r') {
-              cmd_buf[cmd_idx] = '\0';
-              if (cmd_idx > 0) {
-                  // process command
-                  if (strncmp(cmd_buf, "CMD:PING", 8) == 0) {
-                      printf("ACK:PONG\r\n");
-                  } else {
-                      printf("ACK:UNKNOWN %s\r\n", cmd_buf);
-                  }
-                  cmd_idx = 0;
-              }
-          } else {
-              if (cmd_idx < sizeof(cmd_buf) - 1) {
-                  cmd_buf[cmd_idx++] = rx_byte;
-              }
-          }
-      }
+      App_Poll();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

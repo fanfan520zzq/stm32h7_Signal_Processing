@@ -53,6 +53,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+        Core/Profiles/app_profile.c
+        Core/Profiles/app_profile.h
         Core/Algorithms/measure.c
         Core/Algorithms/measure.h
         Core/Protocols/msg_def.h
