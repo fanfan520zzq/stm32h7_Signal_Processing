@@ -5,12 +5,9 @@
 #include "adc_capture.h"
 #include "dac_dds.h"
 
-// External module functions
-extern void CMD_Init(void);
-extern void FFT_Init(void);
-extern void UART_Proto_Init(void);
-extern void UART_Poll(void);
-extern void CMD_Poll(void);
+#include "vofa_protocol.h"
+#include "lcd_protocol.h"
+#include "usart_driver.h"
 
 static ProfileType_t current_profile = PROFILE_IDLE;
 
@@ -22,9 +19,8 @@ int32_t App_SelectProfile(ProfileType_t profile) {
 void App_Init(void) {
     if (current_profile == PROFILE_UART_DEBUG) {
         printf("LOG:INFO System Initialized. Profile: UART_DEBUG\r\n");
-        UART_Proto_Init();
-        CMD_Init();
-        FFT_Init();
+        VOFA_Init();
+        LCD_Init();
 
         // SI5351 Output Test (Stage 3 Verification)
         if (si5351_Init() == 0) { // 0 = ERROR_NONE
@@ -51,6 +47,9 @@ volatile uint16_t test_dds_bias = 1650;
 volatile uint8_t  test_dds_duty = 50;
 static uint8_t dds_initialized = 0;
 
+// Legacy variables required by fft_analysis.c
+uint8_t g_is_adc_continuous = 1;
+
 void App_Poll(void) {
     switch (current_profile) {
         case PROFILE_IDLE:
@@ -59,24 +58,49 @@ void App_Poll(void) {
 
         case PROFILE_UART_DEBUG:
         {
-            // ASCII fallback (CMD:PING) and binary VOFA frame check are now inside UART_Poll
-            UART_Poll(); // Read binary protocol and ASCII loopback
-            CMD_Poll();  // Execute commands
+            // VOFA Protocol Poll (Handles CMD:DDS_SET and future PC commands)
+            VOFA_Poll();
+            
+            // FSM specifically for LCD Events
+            LCD_Message_t msg;
+            if (LCD_PollEvent(&msg)) {
+                switch(msg.type) {
+                    case LCD_EVENT_BTN_START:
+                        // User pressed Start on LCD
+                        test_dds_flag = 1;
+                        LCD_SetText("t_status", "Running");
+                        break;
+                    case LCD_EVENT_BTN_STOP:
+                        // User pressed Stop on LCD
+                        DDS_Stop();
+                        dds_initialized = 0;
+                        LCD_SetText("t_status", "Stopped");
+                        break;
+                    case LCD_EVENT_PARAM_CHANGE:
+                        // E.g. Frequency slider changed
+                        test_dds_freq = msg.value;
+                        if (dds_initialized) test_dds_flag = 1; // trigger update
+                        LCD_SetNum("n_freq", test_dds_freq);
+                        break;
+                    default:
+                        break;
+                }
+            }
 
             if (test_adc_flag == 1) {
                 test_adc_flag = 2; // Waiting for completion
-                // Start ADC Capture using SI5351 external clock, 1.024MHz
                 ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 1024000, test_adc_len);
             } else if (test_adc_flag == 2) {
                 if (ADC_Capture_IsComplete()) {
-                    test_adc_flag = 0; // Test finished
+                    test_adc_flag = 0;
                     ADC_DualResult_t res = ADC_Capture_GetResult();
-                    printf("ADC_DATA_START\r\n");
-                    for (uint32_t i = 0; i < res.length; i++) {
-                        printf("%u,%u\r\n", res.ch1[i], res.ch2[i]);
-                        if (i % 32 == 0) HAL_Delay(1); // prevent UART buffer overflow
+                    
+                    // Instead of slow printf, use VOFA high-speed plotting for the first 128 points
+                    for (uint32_t i = 0; i < 128 && i < res.length; i++) {
+                        // Plot ADC1 (ch1) and ADC2 (ch2)
+                        VOFA_JustFloat((float)res.ch1[i], (float)res.ch2[i], 0, 0);
+                        HAL_Delay(1); // Small delay to prevent UART overflow
                     }
-                    printf("ADC_DATA_END\r\n");
                 }
             }
 
@@ -84,6 +108,7 @@ void App_Poll(void) {
                 test_dds_flag = 0;
                 if (!dds_initialized) {
                     DDS_Init();
+                    DDS_ConfigTrigger(DAC_TRIGGER_T4_TRGO);
                     DDS_Start();
                     dds_initialized = 1;
                 }

@@ -31,6 +31,18 @@ void DDS_Init(void)
     HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
 }
 
+void DDS_ConfigTrigger(uint32_t trigger_source)
+{
+    DAC_ChannelConfTypeDef sConfig = {0};
+    sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
+    sConfig.DAC_Trigger = trigger_source;
+    sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_DISABLE;
+    sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
+    sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
+    
+    HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1);
+}
+
 void DDS_SetParam(uint8_t waveType, uint32_t freq_hz, uint16_t vpp_mv, uint16_t bias_mv, uint8_t duty_cycle)
 {
     dds_wave_type = waveType;

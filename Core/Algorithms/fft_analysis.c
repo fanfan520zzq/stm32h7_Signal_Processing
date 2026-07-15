@@ -21,7 +21,11 @@
 #include "fft_analysis.h"
 #include "usart.h"
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
+
+extern uint8_t g_is_adc_continuous;
+extern uint8_t start_adc_flag;
 
 /* =========================================================================
  * Compile-time configuration

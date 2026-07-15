@@ -1,52 +1,54 @@
-// protocol.c
 #include "vofa_protocol.h"
+#include "usart_driver.h"
+#include "app_profile.h" // For globals like test_dds_flag
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
+extern UART_HandleTypeDef huart1;
 
-//MODEBUS - CRC
-uint16_t Proto_CRC16(const uint8_t *data, uint16_t len) {
-    uint16_t crc = 0xFFFF;
-    for (uint16_t i = 0; i < len; i++) {
-        crc ^= (uint16_t)data[i];        // 低字节异或，注意和CCITT的区别
-        for (int j = 0; j < 8; j++)
-            crc = (crc & 0x0001) ? (crc >> 1) ^ 0xA001 : (crc >> 1);  // 低位优先
+void VOFA_Init(void) {
+    // Already initialized by USART_Driver_Init in main, but we can reset states here if needed.
+}
+
+void VOFA_JustFloat(float f1, float f2, float f3, float f4) {
+    float data[4] = {f1, f2, f3, f4};
+    uint8_t tail[4] = {0x00, 0x00, 0x80, 0x7F}; // JustFloat Tail
+    
+    // Send data
+    USART_Driver_WriteBytes(&huart1, (uint8_t*)data, sizeof(data));
+    // Send tail
+    USART_Driver_WriteBytes(&huart1, tail, sizeof(tail));
+}
+
+// Parses ASCII CMD:... from USART1 (PC)
+void VOFA_Poll(void) {
+    uint8_t byte;
+    static char cmdbuf[64];
+    static uint8_t idx = 0;
+    
+    while (USART_Driver_ReadByte(&huart1, &byte)) {
+        if (byte == '\n' || byte == '\r') {
+            if (idx > 0) {
+                cmdbuf[idx] = '\0';
+                
+                // Parse CMD:DDS_SET,<wave>,<freq>,<vpp>,<bias>,<duty>
+                if (strncmp(cmdbuf, "CMD:DDS_SET,", 12) == 0) {
+                    int wave, freq, vpp, bias, duty;
+                    if (sscanf(&cmdbuf[12], "%d,%d,%d,%d,%d", &wave, &freq, &vpp, &bias, &duty) == 5) {
+                        test_dds_wave = wave;
+                        test_dds_freq = freq;
+                        test_dds_vpp = vpp;
+                        test_dds_bias = bias;
+                        test_dds_duty = duty;
+                        test_dds_flag = 1;
+                    }
+                }
+                
+                idx = 0;
+            }
+        } else if (idx < sizeof(cmdbuf) - 1) {
+            cmdbuf[idx++] = (char)byte;
+        }
     }
-    return crc;
-}
-
-// 解包：只管格式正确性和CRC，不管业务范围
-bool Proto_Decode(const uint8_t *raw, ProtoFrame *out) {
-    // 帧头校验
-    if (raw[0] != PROTO_HEADER) return false;
-    // 长度字段校验
-    if (raw[1] != PROTO_LEN)    return false;
-    // CRC校验（前8字节）
-    uint16_t calc_crc     = Proto_CRC16(raw, 8);
-    uint16_t received_crc = (uint16_t)(raw[8] | (raw[9] << 8));
-    if (calc_crc != received_crc) return false;
-
-    out->op        = (ProtoOP)raw[2];
-    out->freq_hz   = (uint16_t)(raw[3] | (raw[4] << 8));
-    out->vpp_mv    = (uint16_t)(raw[5] | (raw[6] << 8));
-    out->wave_type = raw[7];
-    return true;
-}
-
-// 业务范围校验：解包成功后再调用
-bool Proto_Validate(const ProtoFrame *frame) {
-    // ADC指令不需要校验频率和VPP
-    if (frame->op == OP_ADC_ON || frame->op == OP_ADC_OFF)
-        return true;
-    // DAC关闭指令也不需要
-    if (frame->op == OP_DAC1_OFF || frame->op == OP_DAC2_OFF)
-        return true;
-
-    // DAC更新指令校验范围
-    if (frame->freq_hz < FREQ_MIN || frame->freq_hz > FREQ_MAX)
-        return false;
-    if (frame->vpp_mv  < VPP_MIN  || frame->vpp_mv  > VPP_MAX)
-        return false;
-    if (frame->wave_type > 2)
-        return false;
-
-    return true;
 }

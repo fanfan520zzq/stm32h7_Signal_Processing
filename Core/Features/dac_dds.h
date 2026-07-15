@@ -20,6 +20,7 @@ extern uint16_t dds_dma_buf[2000];
 
 // Public API
 void DDS_Init(void);
+void DDS_ConfigTrigger(uint32_t trigger_source);
 void DDS_Start(void);
 void DDS_Stop(void);
 void DDS_SetParam(uint8_t waveType, uint32_t freq_hz, uint16_t vpp_mv, uint16_t bias_mv, uint8_t duty_cycle);

@@ -32,7 +32,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_profile.h"
 #include "dac_dds.h"
-#include "msg_def.h"
+
 #include "si5351.h" // Include SI5351 driver
 #include "ad9833_hal.h"
 #include "adc_capture.h"
@@ -68,8 +68,7 @@ void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-extern void UART1_Receive_Start(void);
-extern uint8_t UART1_Read_Byte(uint8_t *byte);
+#include "usart_driver.h"
 extern void CMD_Init(void);
 extern void FFT_Init(void);
 extern void UART_Poll(void);
@@ -137,7 +136,8 @@ int main(void)
   MX_TIM5_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  UART1_Receive_Start();
+  USART_Driver_Init(&huart1);
+  USART_Driver_Init(&huart3);
   
   // Select and Initialize Profile
   App_SelectProfile(PROFILE_UART_DEBUG);

@@ -9,7 +9,7 @@
 #define IIT6_OSCILLISCOPE_FFTTASK_H
 
 #include "adc_capture.h"
-#include "msg_def.h"
+
 #include "lcd_protocol.h"   /* Provides SINE / SQUARE / TRIANGLE / DC */
 
 /* -----------------------------------------------------------------------
