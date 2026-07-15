@@ -18,6 +18,7 @@
 #define ARM_MATH_CM7          /* Must be defined before arm_math.h */
 #include "arm_math.h"
 
+#include "app_profile.h"
 #include "fft_analysis.h"
 #include "usart.h"
 #include <stdio.h>
@@ -268,10 +269,21 @@ uint8_t FFT_Poll(void)
             g_ch2_result.rms = Compute_RMS(CH2_Buffer, LEN);
         }
 
-        /* Debug Print to UART (Removed to prevent FireWater protocol pollution) */
-        // printf("\r\n--- STAGE 7 SIGNAL ANALYSIS ---\r\n");
-        // printf("CH1: ZeroCrossFreq=%.1f Hz, FFTFreq=%.1f Hz, Vpp=%.3f V, RMS=%.3f V, Type=%d\r\n", g_ch1_result.freq_hz, g_ch1_result.freq_fft, g_ch1_result.vpp, g_ch1_result.rms, g_ch1_result.type_id);
-        // ...
+        extern ProfileType_t current_profile;
+        if (current_profile == PROFILE_UART_DEBUG || current_profile == PROFILE_SIGNAL_ANALYSIS) {
+            static uint32_t last_print = 0;
+            if (HAL_GetTick() - last_print >= 1000) {
+                last_print = HAL_GetTick();
+                /* Debug Print to UART (Restored for Python script parsing in Stage 8) */
+                printf("\r\n--- STAGE 8 SIGNAL ANALYSIS ---\r\n");
+                printf("CH1: ZeroCrossFreq=%.1f Hz, FFTFreq=%.1f Hz, Vpp=%.3f V, RMS=%.3f V, Type=%d\r\n", g_ch1_result.freq_hz, g_ch1_result.freq_fft, g_ch1_result.vpp, g_ch1_result.rms, g_ch1_result.type_id);
+                printf("CH1 Harmonics (1-5): %.3f, %.3f, %.3f, %.3f, %.3f\r\n", g_ch1_result.harmonics[0], g_ch1_result.harmonics[1], g_ch1_result.harmonics[2], g_ch1_result.harmonics[3], g_ch1_result.harmonics[4]);
+                
+                printf("CH2: ZeroCrossFreq=%.1f Hz, FFTFreq=%.1f Hz, Vpp=%.3f V, RMS=%.3f V, Type=%d\r\n", g_ch2_result.freq_hz, g_ch2_result.freq_fft, g_ch2_result.vpp, g_ch2_result.rms, g_ch2_result.type_id);
+                printf("CH2 Harmonics (1-5): %.3f, %.3f, %.3f, %.3f, %.3f\r\n", g_ch2_result.harmonics[0], g_ch2_result.harmonics[1], g_ch2_result.harmonics[2], g_ch2_result.harmonics[3], g_ch2_result.harmonics[4]);
+                printf("-------------------------------\r\n");
+            }
+        }
 
         /* Step 8 – Vpp in volts (dead channels already forced to 0.0) */
         if (!ch1_dead)

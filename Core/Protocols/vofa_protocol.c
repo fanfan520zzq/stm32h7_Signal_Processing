@@ -26,6 +26,7 @@ void VOFA_Poll(void) {
         if (byte == '\n' || byte == '\r') {
             if (idx > 0) {
                 cmdbuf[idx] = '\0';
+                printf("LOG:DEBUG RX: '%s'\r\n", cmdbuf);
                 
                 // Parse CMD:DDS_SET,<wave>,<freq>,<vpp>,<bias>,<duty>
                 if (strncmp(cmdbuf, "CMD:DDS_SET,", 12) == 0) {
