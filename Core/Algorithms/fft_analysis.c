@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include "measure.h"
 
 extern uint8_t g_is_adc_continuous;
 extern uint8_t start_adc_flag;
@@ -32,7 +33,7 @@ extern uint8_t start_adc_flag;
  * ========================================================================= */
 
 /** ADC sample rate [Hz] */
-#define SAMPLE_RATE_HZ          10000.0f
+#define SAMPLE_RATE_HZ          1024000.0f
 
 /** ADC full-scale reference voltage [V] */
 #define ADC_VREF                3.3f
@@ -122,12 +123,12 @@ static float      FFT_MeasureFrequency(const uint16_t *buf,
                                         uint32_t        len,
                                         float           sample_rate,
                                         uint16_t        v_mid);
+static float      FFT_EnergyCenterCorrection(const float *mag, uint32_t mag_len, float sample_rate);
 static float      FFT_FindPeakInRange(const float *buf,
                                        uint32_t     start,
                                        uint32_t     end,
                                        uint32_t     buf_len);
-static uint8_t    FFT_ClassifyWaveform(const float *mag, uint32_t mag_len);
-static void       FFT_UpdateLCD(void);
+static uint8_t    FFT_ClassifyWaveform_Goertzel(float fund_freq, const uint16_t *buf, float sample_rate, float* out_harmonics);
 
 /* =========================================================================
  * Redirect printf → UART1
@@ -158,7 +159,7 @@ void FFT_Init(void)
     memset(&g_ch2_result, 0, sizeof(Channel_Result_t));
 }
 
-void FFT_Poll(void)
+uint8_t FFT_Poll(void)
 {
     if (fft_ready_flag)
     {
@@ -191,12 +192,11 @@ void FFT_Poll(void)
             g_ch2_result.type_id = DC;
         }
 
-        /* If both channels are dead, skip directly to LCD update */
+        /* If both channels are dead, we can skip directly */
         if (ch1_dead && ch2_dead)
         {
-            FFT_UpdateLCD();
             if (g_is_adc_continuous == 1) start_adc_flag = 1;
-            return;
+            return 1;
         }
 
         /* Step 3 – Frequency via zero-crossing (live channels only) */
@@ -234,31 +234,44 @@ void FFT_Poll(void)
             arm_rfft_fast_f32(&fft_inst, s_ch2_fft_in, s_ch2_fft_out, 0);
         }
 
-        /* Step 6 – Build magnitude spectrum (live channels only)
-         *
-         * arm_rfft_fast_f32 output layout:
-         *   out[0]        = DC bin     (real only)
-         *   out[1]        = Nyquist    (real only)
-         *   out[2..N-1]   = bins 1..(N/2-1)  interleaved Re/Im
-         */
+        /* Step 6 – Build magnitude spectrum */
         if (!ch1_dead)
         {
             s_ch1_mag[0]       = fabsf(s_ch1_fft_out[0]);
             arm_cmplx_mag_f32(&s_ch1_fft_out[2], &s_ch1_mag[1], (LEN / 2) - 1);
             s_ch1_mag[LEN / 2] = fabsf(s_ch1_fft_out[1]);
+            
+            g_ch1_result.freq_fft = FFT_EnergyCenterCorrection(s_ch1_mag, LEN / 2 + 1, SAMPLE_RATE_HZ);
         }
         if (!ch2_dead)
         {
             s_ch2_mag[0]       = fabsf(s_ch2_fft_out[0]);
             arm_cmplx_mag_f32(&s_ch2_fft_out[2], &s_ch2_mag[1], (LEN / 2) - 1);
             s_ch2_mag[LEN / 2] = fabsf(s_ch2_fft_out[1]);
+            
+            g_ch2_result.freq_fft = FFT_EnergyCenterCorrection(s_ch2_mag, LEN / 2 + 1, SAMPLE_RATE_HZ);
         }
 
-        /* Step 7 – Waveform type classification (live channels only) */
+        /* Step 7 – Waveform type classification using Goertzel (live channels only) */
         if (!ch1_dead)
-            g_ch1_result.type_id = FFT_ClassifyWaveform(s_ch1_mag, LEN / 2 + 1);
+            g_ch1_result.type_id = FFT_ClassifyWaveform_Goertzel(g_ch1_result.freq_fft, CH1_Buffer, SAMPLE_RATE_HZ, g_ch1_result.harmonics);
         if (!ch2_dead)
-            g_ch2_result.type_id = FFT_ClassifyWaveform(s_ch2_mag, LEN / 2 + 1);
+            g_ch2_result.type_id = FFT_ClassifyWaveform_Goertzel(g_ch2_result.freq_fft, CH2_Buffer, SAMPLE_RATE_HZ, g_ch2_result.harmonics);
+
+        /* Step 8 – Vpp and RMS in volts (dead channels already forced to 0.0) */
+        if (!ch1_dead) {
+            g_ch1_result.vpp = (float)(g_ch1_result.stat.max - g_ch1_result.stat.min) * ADC_LSB_VOLTAGE;
+            g_ch1_result.rms = Compute_RMS(CH1_Buffer, LEN);
+        }
+        if (!ch2_dead) {
+            g_ch2_result.vpp = (float)(g_ch2_result.stat.max - g_ch2_result.stat.min) * ADC_LSB_VOLTAGE;
+            g_ch2_result.rms = Compute_RMS(CH2_Buffer, LEN);
+        }
+
+        /* Debug Print to UART (Removed to prevent FireWater protocol pollution) */
+        // printf("\r\n--- STAGE 7 SIGNAL ANALYSIS ---\r\n");
+        // printf("CH1: ZeroCrossFreq=%.1f Hz, FFTFreq=%.1f Hz, Vpp=%.3f V, RMS=%.3f V, Type=%d\r\n", g_ch1_result.freq_hz, g_ch1_result.freq_fft, g_ch1_result.vpp, g_ch1_result.rms, g_ch1_result.type_id);
+        // ...
 
         /* Step 8 – Vpp in volts (dead channels already forced to 0.0) */
         if (!ch1_dead)
@@ -268,15 +281,26 @@ void FFT_Poll(void)
             g_ch2_result.vpp = (float)(g_ch2_result.stat.max
                                        - g_ch2_result.stat.min) * ADC_LSB_VOLTAGE;
 
-        /* Step 9 – Push to LCD */
-        FFT_UpdateLCD();
+        /* Step 9 - Skip LCD and VOFA here to maintain low coupling.
+           The caller (app_profile) will retrieve results and push them. */
 
         /* Step 10 – Release ADC for next acquisition */
         if (g_is_adc_continuous == 1)
         {
             start_adc_flag = 1;
         }
+        
+        return 1;
     }
+    return 0;
+}
+
+const float* FFT_GetCh1MagBuffer(void) {
+    return s_ch1_mag;
+}
+
+const float* FFT_GetCh2MagBuffer(void) {
+    return s_ch2_mag;
 }
 
 /* =========================================================================
@@ -438,66 +462,78 @@ static float FFT_FindPeakInRange(const float *buf,
     return peak;
 }
 
-/**
- * @brief  Classify waveform type from the 3rd-harmonic / fundamental ratio.
- *
- * Returns one of the type constants from LCD.h:
- *   SINE / TRIANGLE / SQUARE / DC
- *
- * Thresholds are tunable via macros at the top of this file.
- *
- * @param  mag      Magnitude spectrum (mag[0]=DC, mag[1]=bin1, …)
- * @param  mag_len  Length of mag array (= LEN/2 + 1).
- * @return LCD type constant.
- */
-static uint8_t FFT_ClassifyWaveform(const float *mag, uint32_t mag_len)
+static float FFT_EnergyCenterCorrection(const float *mag, uint32_t mag_len, float sample_rate)
 {
-    /* Find fundamental bin – skip DC at index 0 */
-    float    fund_mag = 0.0f;
-    uint32_t fund_idx = 0u;
-    arm_max_f32(&mag[1], mag_len - 1u, &fund_mag, &fund_idx);
-    fund_idx += 1u; /* shift back to absolute index */
-
-    if (fund_mag < 1e-6f) return DC; /* guard: no signal detected */
-
-    /* Measure 3rd harmonic with a ±HARMONIC_SEARCH_RADIUS bin window */
-    uint32_t h3_center = fund_idx * 3u;
-    uint32_t h3_start  = (h3_center > HARMONIC_SEARCH_RADIUS)
-                         ? h3_center - HARMONIC_SEARCH_RADIUS : 0u;
-    uint32_t h3_end    = h3_center + HARMONIC_SEARCH_RADIUS;
-
-    float ratio = FFT_FindPeakInRange(mag, h3_start, h3_end, mag_len)
-                  / fund_mag;
-
-    if      (ratio < SINE_THRESHOLD)     return SINE;
-    else if (ratio < TRIANGLE_THRESHOLD) return TRIANGLE;
-    else if (ratio > DC_THRESHOLD)       return DC;
-    else                                 return SQUARE;
+    float max_mag = 0;
+    uint32_t max_idx = 0;
+    arm_max_f32((float*)&mag[1], mag_len - 1, &max_mag, &max_idx);
+    max_idx += 1;
+    
+    if (max_mag < 1e-6f || max_idx <= 1 || max_idx >= mag_len - 1) {
+        return (float)max_idx * sample_rate / (float)LEN;
+    }
+    
+    float left = mag[max_idx - 1];
+    float center = mag[max_idx];
+    float right = mag[max_idx + 1];
+    float sum = left + center + right;
+    
+    float weighted_bin = ((float)(max_idx - 1) * left + (float)max_idx * center + (float)(max_idx + 1) * right) / sum;
+    
+    return weighted_bin * sample_rate / (float)LEN;
 }
 
 /**
- * @brief  Push both channels' latest results to the LCD.
- *
- * Two calls are made per frame:
- *   - LCD_Update_Stats : numerical readout (freq / Vpp / type)
- *   - LCD_Update_Waves : rendered waveform preview (×2 channels)
- *
- * Amplitude passed to LCD_Update_Waves is the raw ADC count difference
- * (max - min, range 0-65535), which the LCD driver maps to its 0-160 pixel
- * height via a 16-bit right-shift.
+ * @brief  Classify waveform type from Goertzel harmonics up to 5th.
  */
-static void FFT_UpdateLCD(void)
+static uint8_t FFT_ClassifyWaveform_Goertzel(float fund_freq, const uint16_t *buf, float sample_rate, float* out_harmonics)
 {
-    LCD_Update_Stats(g_ch1_result.freq_hz, g_ch1_result.vpp, g_ch1_result.type_id,
-                     g_ch2_result.freq_hz, g_ch2_result.vpp, g_ch2_result.type_id);
+    if (fund_freq < 1.0f) {
+        for(int i=0; i<5; i++) out_harmonics[i] = 0;
+        return DC;
+    }
 
-    LCD_Update_Waves(g_ch1_result.type_id,
-                     g_ch1_result.stat.max - g_ch1_result.stat.min,
-                     CH1,
-                     g_ch1_result.freq_hz);
+    for (int i = 1; i <= 5; i++) {
+        // Prevent Goertzel above Nyquist frequency
+        if (fund_freq * (float)i >= sample_rate / 2.0f) {
+            out_harmonics[i-1] = 0.0f;
+        } else {
+            out_harmonics[i-1] = Goertzel_Vpp(buf, LEN, fund_freq * (float)i, sample_rate);
+        }
+    }
+    
+    float h1 = out_harmonics[0];
+    if (h1 < 0.01f) return DC;
 
-    LCD_Update_Waves(g_ch2_result.type_id,
-                     g_ch2_result.stat.max - g_ch2_result.stat.min,
-                     CH2,
-                     g_ch2_result.freq_hz);
+    float h2_ratio = out_harmonics[1] / h1;
+    float h3_ratio = out_harmonics[2] / h1;
+    float h4_ratio = out_harmonics[3] / h1;
+    float h5_ratio = out_harmonics[4] / h1;
+
+    // Sum of even harmonics (2nd + 4th)
+    float even_sum = h2_ratio + h4_ratio;
+    
+    // Sum of odd harmonics (3rd + 5th)
+    float odd_sum = h3_ratio + h5_ratio;
+
+    // 1. Square waves (arbitrary duty cycle) have significant even harmonics. 
+    //    e.g. 30% duty cycle square wave has ~58% 2nd harmonic.
+    if (even_sum > 0.10f) {
+        return SQUARE;
+    }
+
+    // 2. 50% Square wave has no even harmonics, but large odd harmonics (3rd ~33%, 5th ~20%)
+    if (odd_sum > 0.20f) {
+        return SQUARE;
+    }
+
+    // 3. Triangle wave has minimal even harmonics, and moderate odd harmonics (3rd ~11%, 5th ~4%)
+    if (odd_sum > 0.05f && odd_sum <= 0.20f) {
+        return TRIANGLE;
+    }
+
+    // 4. Otherwise, it's a Sine wave (harmonics are very small, odd_sum < 5%)
+    return SINE;
 }
+
+// LCD update removed to maintain low coupling.

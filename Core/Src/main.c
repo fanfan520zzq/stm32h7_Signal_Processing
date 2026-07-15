@@ -136,6 +136,12 @@ int main(void)
   MX_TIM5_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  
+  /* Run ADC Calibration for all ADCs used (3.3V VREF+) */
+  HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+  HAL_ADCEx_Calibration_Start(&hadc2, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+  HAL_ADCEx_Calibration_Start(&hadc3, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
+
   USART_Driver_Init(&huart1);
   USART_Driver_Init(&huart3);
   

@@ -31,8 +31,11 @@ typedef struct {
  */
 typedef struct {
     ADC_Stat_t stat;     /**< Raw ADC statistics                               */
-    float      freq_hz;  /**< Fundamental frequency [Hz]                       */
+    float      freq_hz;  /**< Fundamental frequency [Hz] (zero-cross)          */
+    float      freq_fft; /**< Fundamental frequency [Hz] (FFT energy center)   */
     float      vpp;      /**< Peak-to-peak voltage  [V]                        */
+    float      rms;      /**< RMS voltage [V]                                  */
+    float      harmonics[5]; /**< Magnitudes of 1st to 5th harmonics           */
     uint8_t    type_id;  /**< Waveform type: SINE / SQUARE / TRIANGLE / DC     */
 } Channel_Result_t;
 
@@ -47,10 +50,12 @@ extern Channel_Result_t g_ch2_result;
  * --------------------------------------------------------------------- */
 
 /**
- * @brief  FreeRTOS task entry – FFT processing + LCD update loop.
- * @param  argument  Unused (required by osThreadFunc_t signature).
+ * @brief  Poll FFT computation. Returns 1 if new data was processed, 0 otherwise.
  */
-void StartFFTTask(void *argument);
+uint8_t FFT_Poll(void);
+
+const float* FFT_GetCh1MagBuffer(void);
+const float* FFT_GetCh2MagBuffer(void);
 
 /**
  * @brief  Find the first rising zero-crossing in a float buffer.

@@ -13,4 +13,7 @@ void VOFA_FireWater(float f1, float f2, float f3, float f4);
 // Poll for any incoming debug commands (can parse CMD:DDS_SET or raw binary)
 void VOFA_Poll(void);
 
+// Send magnitude spectrum array via FireWater protocol
+void VOFA_SendSpectrum(const float* mag, uint32_t len);
+
 #endif // VOFA_PROTOCOL_H

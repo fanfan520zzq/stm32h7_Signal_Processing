@@ -47,3 +47,15 @@ void VOFA_Poll(void) {
         }
     }
 }
+
+void VOFA_SendSpectrum(const float* mag, uint32_t len) {
+    if (len == 0) return;
+    
+    // VOFA+ FireWater protocol expects each curve (channel) separated by commas per line.
+    // To plot an array (spectrum) as a SINGLE curve, we must send each frequency bin 
+    // as a sequential data point in time on a single channel.
+    for (uint32_t i = 0; i < len; i++) {
+        // "mag:value\n" matches "<any>:ch0\n"
+        printf("mag:%.2f\n", mag[i]);
+    }
+}
