@@ -6,19 +6,14 @@
 #include <stdlib.h>
 
 extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart3;
 
 void VOFA_Init(void) {
     // Already initialized by USART_Driver_Init in main, but we can reset states here if needed.
 }
 
-void VOFA_JustFloat(float f1, float f2, float f3, float f4) {
-    float data[4] = {f1, f2, f3, f4};
-    uint8_t tail[4] = {0x00, 0x00, 0x80, 0x7F}; // JustFloat Tail
-    
-    // Send data
-    USART_Driver_WriteBytes(&huart1, (uint8_t*)data, sizeof(data));
-    // Send tail
-    USART_Driver_WriteBytes(&huart1, tail, sizeof(tail));
+void VOFA_FireWater(float f1, float f2, float f3, float f4) {
+    printf("%f,%f,%f,%f\n", f1, f2, f3, f4);
 }
 
 // Parses ASCII CMD:... from USART1 (PC)

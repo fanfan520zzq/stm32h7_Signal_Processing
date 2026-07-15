@@ -42,5 +42,6 @@ void LCD_Update_Waves(uint8_t type, uint16_t amp, uint8_t ch, float freq);
 
 // Probe API: Switch page (e.g. page 1)
 void LCD_SetPage(uint8_t page_id);
+void LCD_AddWavePoint(uint8_t obj_id, uint8_t ch, uint8_t val);
 
 #endif // LCD_PROTOCOL_H

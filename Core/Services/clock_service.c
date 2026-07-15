@@ -100,7 +100,8 @@ int32_t Clock_Service_SetADCFreq(ClockSource_t src, uint32_t target_hz, uint32_t
     __HAL_TIM_SET_AUTORELOAD(&htim4, arr);
     __HAL_TIM_SET_COUNTER(&htim4, 0);
     
-    HAL_TIM_Base_Start(&htim4); // Wait to start or start immediately?
+    // Do not start here! Let ADC capture module start it after DMA is ready.
+    // HAL_TIM_Base_Start(&htim4);
     return ERR_OK;
 }
 

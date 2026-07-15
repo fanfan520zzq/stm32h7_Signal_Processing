@@ -32,8 +32,11 @@ void USART_Driver_Init(UART_HandleTypeDef *huart) {
     drv->ring_head = 0;
     drv->ring_tail = 0;
     
-    HAL_UARTEx_ReceiveToIdle_DMA(huart, drv->dma_rx_buf, DMA_RX_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT); // Disable half transfer IT to reduce overhead
+    if (HAL_UARTEx_ReceiveToIdle_DMA(huart, drv->dma_rx_buf, DMA_RX_BUF_SIZE) == HAL_OK) {
+        if (huart->hdmarx != NULL) {
+            __HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT); // Disable half transfer IT to reduce overhead
+        }
+    }
 }
 
 uint8_t USART_Driver_ReadByte(UART_HandleTypeDef *huart, uint8_t *byte) {
