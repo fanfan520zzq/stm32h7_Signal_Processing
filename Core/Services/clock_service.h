@@ -39,4 +39,11 @@ int32_t Clock_Service_SetADCFreq(ClockSource_t src, uint32_t target_hz, uint32_t
  */
 int32_t Clock_Service_SetDACFreq(uint8_t dac_channel, ClockSource_t src, uint32_t target_hz, uint32_t* actual_hz);
 
+/**
+ * @brief Set the auxiliary frequency for the SI5351 CLK2
+ * @param target_hz Desired auxiliary rate in Hz
+ * @return int32_t ERR_OK on success
+ */
+int32_t Clock_Service_SetAuxFreq(uint32_t target_hz);
+
 #endif /* CLOCK_SERVICE_H */

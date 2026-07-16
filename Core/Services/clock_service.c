@@ -44,8 +44,11 @@ int32_t Clock_Service_SetADCFreq(ClockSource_t src, uint32_t target_hz, uint32_t
     
     if (src == CLOCK_SRC_EXTERNAL_SI5351) {
         // Use 20.48MHz from SI5351 as master timebase
-        if (si5351_Init() != 0) {
-            return ERR_HARDWARE;
+        extern si5351Config_t m_si5351Config;
+        if (!m_si5351Config.initialised) {
+            if (si5351_Init() != 0) {
+                return ERR_HARDWARE;
+            }
         }
         si5351_set_freq(0, target_hz); // Set SI5351 to exactly target_hz
         
@@ -126,4 +129,13 @@ int32_t Clock_Service_SetDACFreq(uint8_t dac_channel, ClockSource_t src, uint32_
     
     HAL_TIM_Base_Start(htim);
     return ERR_OK;
+}
+
+int32_t Clock_Service_SetAuxFreq(uint32_t target_hz) {
+    extern si5351Config_t m_si5351Config;
+    if (!m_si5351Config.initialised) {
+        if (si5351_Init() != 0) return -1;
+    }
+    si5351_set_freq(2, target_hz);
+    return 0;
 }

@@ -10,6 +10,7 @@
 #include "usart_driver.h"
 #include "fft_analysis.h"
 #include <stdlib.h>
+#include "spi_driver.h"
 
 extern UART_HandleTypeDef huart1;
 
@@ -65,6 +66,14 @@ void App_Init(void) {
         DDS_ConfigTrigger(DAC_TRIGGER_T4_TRGO);
         DDS_SetParam(DDS_WAVE_SINE, 1000, 3300, 1650, 50);
         DDS_Start();
+    }
+    else if (current_profile == PROFILE_SPI_TEST) {
+        printf("LOG:INFO System Initialized. Profile: SPI_TEST\r\n");
+        SPI_Driver_Init();
+        
+        // Output SI5351 Clocks for testing
+        Clock_Service_SetADCFreq(CLOCK_SRC_EXTERNAL_SI5351, 2048000, NULL);
+        Clock_Service_SetAuxFreq(20480000);
     }
     else {
         printf("LOG:INFO System Initialized. Profile: IDLE\r\n");
@@ -131,6 +140,23 @@ void App_Poll(void) {
             // Clear completion flag manually
             extern uint8_t fft_ready_flag;
             fft_ready_flag = 0;
+        }
+    }
+    else if (current_profile == PROFILE_SPI_TEST) {
+        static uint32_t last_spi_time = 0;
+        if (HAL_GetTick() - last_spi_time >= 1000) {
+            last_spi_time = HAL_GetTick();
+            
+            uint8_t tx_buf[4] = {0x5A, 0xA5, 0x12, 0x34};
+            uint8_t rx_buf[4] = {0};
+            
+            if (SPI_Driver_TransmitReceive(tx_buf, rx_buf, 4, 100) == ERR_OK) {
+                printf("LOG:INFO SPI2 TX: %02X %02X %02X %02X -> RX: %02X %02X %02X %02X\r\n",
+                       tx_buf[0], tx_buf[1], tx_buf[2], tx_buf[3],
+                       rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
+            } else {
+                printf("LOG:ERROR SPI2 Timeout or Error\r\n");
+            }
         }
     }
 

@@ -77,6 +77,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Protocols/vofa_protocol.c
         Core/Protocols/vofa_protocol.h
         Core/Drivers/usart_driver.c
+        Core/Drivers/spi_driver.c
+        Core/Drivers/spi_driver.h
         Core/BSP/si5351/si5351.c
         Core/BSP/si5351/si5351.h
         Core/BSP/AD9833/ad9833_hal.c

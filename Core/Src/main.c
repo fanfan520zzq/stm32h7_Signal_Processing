@@ -146,7 +146,7 @@ int main(void)
   USART_Driver_Init(&huart3);
   
   // Select and Initialize Profile
-  App_SelectProfile(PROFILE_UART_DEBUG);
+  App_SelectProfile(PROFILE_SPI_TEST);
   App_Init();
 
   /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
