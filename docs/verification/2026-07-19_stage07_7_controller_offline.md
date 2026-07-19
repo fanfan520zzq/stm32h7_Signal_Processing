@@ -103,3 +103,16 @@ closed-loop execution on the current STM32/FPGA board and the reported numerical
 does not prove analog DA phase accuracy, final gain selection across operating conditions, or the
 5-degree instrument requirement. Those claims remain `BENCH_PENDING` until oscilloscope evidence
 is recorded.
+
+## User board observation
+
+After explicitly enabling the closed loop, the user observed on the oscilloscope that reference
+A and generated A-prime stopped drifting and were visibly locked. This upgrades the result from a
+UART-only observation, but it is not yet a quantitative `BENCH_PASS` because no screenshot,
+measurement conditions, lock time or phase-error value was recorded.
+
+Changing reference A from triangle to sine did not change the generated A-prime waveform type.
+That behavior is outside the Stage 07.7 DPLL contract: the loop tracks the configured fundamental
+frequency and phase, while waveform classification and automatic waveform-type propagation are
+not implemented. A continuing phase drift while `mode=2 state=LOCKED` would be a DPLL failure and
+must be treated separately from waveform-type following.
