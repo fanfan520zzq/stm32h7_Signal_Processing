@@ -11,10 +11,13 @@
 #include "fft_analysis.h"
 #include <stdlib.h>
 #include "spi_driver.h"
+#include "dft_separate.h"
+#include "fpga_ctrl.h"
 
 extern UART_HandleTypeDef huart1;
 
 ProfileType_t current_profile = PROFILE_IDLE;
+volatile uint8_t trigger_spi_test = 0;
 
 int32_t App_SelectProfile(ProfileType_t profile) {
     current_profile = profile;
@@ -22,6 +25,7 @@ int32_t App_SelectProfile(ProfileType_t profile) {
 }
 
 void App_Init(void) {
+    printf("LOG:INFO Build: %s %s\r\n", __DATE__, __TIME__);
     if (current_profile == PROFILE_UART_DEBUG) {
         printf("LOG:INFO System Initialized. Profile: UART_DEBUG\r\n");
         VOFA_Init();
@@ -35,21 +39,24 @@ void App_Init(void) {
         DDS_ConfigTrigger(DAC_TRIGGER_T4_TRGO);
         DDS_SetParam(DDS_WAVE_SINE, 1000, 3300, 1650, 50);
         DDS_Start();
-        
-        ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 1024000, LEN);
+        Clock_Service_SetAuxFreq(25000000); // 25MHz for FPGA DA
+        ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 2500000, 2000);
     } 
     else if (current_profile == PROFILE_SIGNAL_ANALYSIS) {
         printf("LOG:INFO System Initialized. Profile: SIGNAL_ANALYSIS\r\n");
         VOFA_Init();
-        LCD_Init();
+        // LCD_Init();
         
         extern void FFT_Init(void);
         FFT_Init();
         
         Clock_Service_Init();
+        // Clock_Service_SetAuxFreq(25000000); // 25MHz for FPGA DA
+        
+        FPGA_Ctrl_Init();
         
         // Signal analysis requires ADC capture
-        ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 1024000, LEN);
+        ADC_Capture_StartSingle(CLOCK_SRC_INTERNAL, 2500000, 2000);
     }
     else if (current_profile == PROFILE_ADC_VOFA) {
         printf("LOG:INFO System Initialized. Profile: ADC_VOFA\r\n");
@@ -57,7 +64,7 @@ void App_Init(void) {
         Clock_Service_Init();
         
         // Start ADC directly
-        ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 1024000, LEN);
+        ADC_Capture_StartSingle(CLOCK_SRC_EXTERNAL_SI5351, 2500000, 2000);
     }
     else if (current_profile == PROFILE_DAC_DDS) {
         printf("LOG:INFO System Initialized. Profile: DAC_DDS\r\n");
@@ -71,9 +78,12 @@ void App_Init(void) {
         printf("LOG:INFO System Initialized. Profile: SPI_TEST\r\n");
         SPI_Driver_Init();
         
+        Clock_Service_Init();
+        
         // Output SI5351 Clocks for testing
-        Clock_Service_SetADCFreq(CLOCK_SRC_EXTERNAL_SI5351, 2048000, NULL);
-        Clock_Service_SetAuxFreq(20480000);
+        Clock_Service_SetADCFreq(CLOCK_SRC_EXTERNAL_SI5351, 2500000, NULL);
+        int32_t clk_res = Clock_Service_SetAuxFreq(25000000);
+        printf("LOG:INFO Clock_Service_SetAuxFreq res = %ld\r\n", clk_res);
     }
     else {
         printf("LOG:INFO System Initialized. Profile: IDLE\r\n");
@@ -100,16 +110,26 @@ void App_Poll(void) {
     if (current_profile == PROFILE_UART_DEBUG || current_profile == PROFILE_SIGNAL_ANALYSIS) {
         ADC_Poll();
         
-        if (FFT_Poll()) {
-            static uint32_t last_vofa_time = 0;
-            if (HAL_GetTick() - last_vofa_time >= 10000) {
-                last_vofa_time = HAL_GetTick();
-                VOFA_SendSpectrum(FFT_GetCh1MagBuffer(), 1024);
+        if (ADC_Capture_IsComplete()) {
+            static uint32_t last_sep_time = 0;
+            if (HAL_GetTick() - last_sep_time >= 1000) {
+                last_sep_time = HAL_GetTick();
+                printf("LOG:INFO Running Execute_Signal_Separation()...\r\n");
+                SignalSeparationResult sep = Execute_Signal_Separation();
+                if (sep.valid_count > 0) {
+                    FPGA_Ctrl_ApplyResult(&sep);
+                }
             }
+            extern uint8_t start_adc_flag;
+            if (g_is_adc_continuous) {
+                start_adc_flag = 1;
+            }
+            extern uint8_t fft_ready_flag;
+            fft_ready_flag = 0;
         }
         
+        VOFA_Poll(); // ASCII 命令解析（PING/FPGA_STATUS 等），两个 profile 都需要
         if (current_profile == PROFILE_UART_DEBUG) {
-            VOFA_Poll();
             if (test_dds_flag) {
                 test_dds_flag = 0;
                 DDS_SetParam(test_dds_wave, test_dds_freq, test_dds_vpp, test_dds_bias, test_dds_duty);
@@ -143,20 +163,37 @@ void App_Poll(void) {
         }
     }
     else if (current_profile == PROFILE_SPI_TEST) {
-        static uint32_t last_spi_time = 0;
-        if (HAL_GetTick() - last_spi_time >= 1000) {
-            last_spi_time = HAL_GetTick();
+        VOFA_Poll(); // Allow UART commands
+        static uint8_t test_done = 0;
+        static uint32_t start_time = 0;
+        if (start_time == 0) start_time = HAL_GetTick();
+        
+        extern volatile uint8_t trigger_spi_test;
+        if ((!test_done && HAL_GetTick() - start_time > 2000) || trigger_spi_test) {
+            test_done = 1;
+            trigger_spi_test = 0;
+            printf("LOG:INFO Starting SPI Link Test (1000 iterations)...\r\n");
             
-            uint8_t tx_buf[4] = {0x5A, 0xA5, 0x12, 0x34};
-            uint8_t rx_buf[4] = {0};
-            
-            if (SPI_Driver_TransmitReceive(tx_buf, rx_buf, 4, 100) == ERR_OK) {
-                printf("LOG:INFO SPI2 TX: %02X %02X %02X %02X -> RX: %02X %02X %02X %02X\r\n",
-                       tx_buf[0], tx_buf[1], tx_buf[2], tx_buf[3],
-                       rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
-            } else {
-                printf("LOG:ERROR SPI2 Timeout or Error\r\n");
+            uint32_t err_count = 0;
+            uint32_t crc_err_count = 0;
+            for (int i = 0; i < 1000; i++) {
+                uint16_t test_val = (i * 137) & 0xFFFF; // random looking pattern
+                uint16_t readback = 0;
+                
+                SPI_Driver_WriteReg(0x01, test_val);
+                int32_t res = SPI_Driver_ReadReg(0x01, &readback);
+                
+                if (res == ERR_CRC) {
+                    crc_err_count++;
+                } else if (test_val != readback) {
+                    err_count++;
+                }
             }
+            
+            uint16_t fpga_id = 0;
+            int32_t spi_res = SPI_Driver_ReadReg(0x00, &fpga_id);
+            
+            printf("LOG:INFO SPI Test Done. Mismatches: %lu/1000, CRC Errs: %lu/1000. FPGA ID: 0x%04X (res=%ld)\r\n", err_count, crc_err_count, fpga_id, spi_res);
         }
     }
 
@@ -164,5 +201,9 @@ void App_Poll(void) {
     if (HAL_GetTick() - last_blink_time >= 500) {
         last_blink_time = HAL_GetTick();
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // Green LED
+        
+        static int toggle = 0;
+        if (toggle) printf("HEARTBEAT: App_Poll is running\r\n");
+        toggle = !toggle;
     }
 }

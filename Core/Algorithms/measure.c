@@ -12,8 +12,7 @@
 
 #include <stdio.h>
 
-#define RS_IN_OHM     4700.0f
-#define RS_OUT_OHM    10000.0f
+// TODO: 根据实际参考电压和ADC分辨率修改
 #define ADC_TO_VOLT   (3.3f / 65535.0f)
 #define ADC2_N        LEN
 #define ADC2_FS       2400000.0f

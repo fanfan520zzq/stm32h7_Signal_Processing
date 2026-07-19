@@ -30,5 +30,6 @@ typedef struct {
 #define ERR_BUSY         -3
 #define ERR_HARDWARE     -4
 #define ERR_NOT_READY    -5
+#define ERR_CRC          -6
 
 #endif /* MODULE_STATE_H */

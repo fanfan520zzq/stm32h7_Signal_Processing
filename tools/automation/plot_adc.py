@@ -38,8 +38,8 @@ def run_adc_test(port, baud, length):
             if not line:
                 continue
             
-            if line == "ADC_DATA_START":
-                print("Recording ADC data...")
+            if line.startswith("ADC_DATA_START"):
+                print(f"Recording ADC data... ({line})")
                 recording = True
                 continue
             elif line == "ADC_DATA_END":
@@ -112,7 +112,7 @@ def run_adc_test(port, baud, length):
     plt.legend()
     
     plt.tight_layout()
-    plt.show()
+    # plt.show()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -67,6 +67,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Features/adc_capture.h
 
         Core/Algorithms/fft_analysis.c
+        Core/Algorithms/dft_separate.c
         Core/Algorithms/fft_analysis.h
 
 
@@ -83,6 +84,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/BSP/si5351/si5351.h
         Core/BSP/AD9833/ad9833_hal.c
         Core/BSP/AD9833/ad9833_hal.h
+        Core/Features/fpga_link/fpga_ctrl.c
+        Core/Features/fpga_link/fpga_ctrl.h
+        Core/Protocols/fpga_spi_protocol.h
 )
 
 
@@ -98,6 +102,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithms
         Core/Protocols
         Core/Features
+        Core/Features/fpga_link
         Core/Services
         Core/Drivers
         Core/Profiles

@@ -16,6 +16,11 @@ static volatile uint8_t adc2_ready = 0;
 uint16_t CH1_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 uint16_t CH2_Buffer[LEN] __attribute__((section(".dma_buffer"))) __attribute__((aligned(32)));
 
+volatile uint32_t adc_dma_count = 0;
+volatile uint32_t dwt_start_time = 0;
+volatile uint32_t dwt_end_time = 0;
+volatile uint32_t dwt_total_cycles = 0;
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     if(hadc == &hadc1){
         HAL_ADC_Stop_DMA(&hadc1);
@@ -25,8 +30,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
         HAL_ADC_Stop_DMA(&hadc2);
         adc2_ready = 1;
     }
-    if(adc1_ready && adc2_ready){
+    if(adc2_ready){ // 只等adc2 ready
+        dwt_end_time = DWT->CYCCNT;
+        dwt_total_cycles = dwt_end_time - dwt_start_time;
         fft_ready_flag = 1;
+        HAL_TIM_Base_Stop(&htim4); // ??????
+        adc_dma_count++;
     }
 }
 
@@ -72,6 +81,9 @@ ADC_DualResult_t ADC_Capture_GetResult(void) {
 void Start_Sample(void) {
     HAL_ADC_Stop_DMA(&hadc1);
     HAL_ADC_Stop_DMA(&hadc2);
+
+    adc1_ready = 0;
+    adc2_ready = 0;
 
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)CH1_Buffer, g_adc_len);
     HAL_ADC_Start_DMA(&hadc2, (uint32_t*)CH2_Buffer, g_adc_len);

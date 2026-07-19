@@ -1,6 +1,7 @@
 #include "vofa_protocol.h"
 #include "usart_driver.h"
 #include "app_profile.h" // For globals like test_dds_flag
+#include "fpga_ctrl.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,36 @@ void VOFA_Poll(void) {
                         test_dds_duty = duty;
                         test_dds_flag = 1;
                     }
+                }
+                else if (strncmp(cmdbuf, "CMD:PING", 8) == 0) {
+                    printf("ACK:PONG\r\n");
+                    printf("LOG:INFO Hello PC\r\n");
+                }
+                else if (strncmp(cmdbuf, "CMD:SPI_TEST", 12) == 0) {
+                    extern volatile uint8_t trigger_spi_test;
+                    trigger_spi_test = 1;
+                    printf("ACK:SPI_TEST\r\n");
+                }
+                else if (strncmp(cmdbuf, "CMD:FPGA_STATUS", 15) == 0) {
+                    FPGA_Ctrl_PrintStatus();
+                }
+                else if (strncmp(cmdbuf, "CMD:ADC_TEST", 12) == 0) {
+                    int len = 1024;
+                    sscanf(&cmdbuf[12], ",%d", &len);
+                    if (len <= 0 || len > 2048) len = 1024;
+                    extern volatile uint32_t adc_dma_count;
+                    printf("ADC_DATA_START, COUNT=%lu\r\n", adc_dma_count);
+                    extern uint16_t CH1_Buffer[];
+                    extern uint16_t CH2_Buffer[];
+                    extern uint8_t start_adc_flag;
+                    // Trigger a capture first (for simplicity we just dump current buffer if already captured,
+                    // but we should ideally wait. Here we just trigger and wait briefly or dump last)
+                    // The easiest is to dump the last captured buffer, assuming it's capturing continuously or we just wait.
+                    // Let's just dump what's in the buffer now for rapid testing.
+                    for (int i=0; i<len; i++) {
+                        printf("%d,%d\r\n", CH1_Buffer[i], CH2_Buffer[i]);
+                    }
+                    printf("ADC_DATA_END\r\n");
                 }
                 
                 idx = 0;

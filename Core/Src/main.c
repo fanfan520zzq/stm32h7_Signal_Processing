@@ -145,8 +145,11 @@ int main(void)
   USART_Driver_Init(&huart1);
   USART_Driver_Init(&huart3);
   
+  setvbuf(stdout, NULL, _IONBF, 0);
+  printf("\r\n\r\n====== BOOTING ======\r\n");
+  
   // Select and Initialize Profile
-  App_SelectProfile(PROFILE_SPI_TEST);
+  App_SelectProfile(PROFILE_SIGNAL_ANALYSIS);
   App_Init();
 
   /* AD9833 Output Test: 1kHz sine with amplitude and phase control */
