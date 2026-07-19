@@ -86,6 +86,27 @@ void FPGA_Ctrl_UpdateFromAlgorithm(uint8_t ch, uint8_t wave_type, uint32_t freq_
     FPGA_Ctrl_Commit();
 }
 
+int32_t FPGA_Ctrl_SetBothWave(FPGA_OutputWave_t wave_type) {
+    uint16_t ch1 = 0U, ch2 = 0U, readback1 = 0U, readback2 = 0U;
+    if (wave_type != FPGA_OUTPUT_WAVE_SINE && wave_type != FPGA_OUTPUT_WAVE_TRIANGLE) {
+        return ERR_PARAM;
+    }
+    if (fpga_rd(FPGA_REG_CH1_WAVE, &ch1) != ERR_OK ||
+        fpga_rd(FPGA_REG_CH2_WAVE, &ch2) != ERR_OK ||
+        fpga_wr(FPGA_REG_CH1_WAVE, (uint16_t)((ch1 & 0xFF00U) | (uint16_t)wave_type)) != ERR_OK ||
+        fpga_wr(FPGA_REG_CH2_WAVE, (uint16_t)((ch2 & 0xFF00U) | (uint16_t)wave_type)) != ERR_OK ||
+        fpga_wr(FPGA_REG_COMMIT, 1U) != ERR_OK ||
+        fpga_rd(FPGA_REG_CH1_WAVE, &readback1) != ERR_OK ||
+        fpga_rd(FPGA_REG_CH2_WAVE, &readback2) != ERR_OK) {
+        return ERR_HARDWARE;
+    }
+    if ((readback1 & 0x0003U) != (uint16_t)wave_type ||
+        (readback2 & 0x0003U) != (uint16_t)wave_type) {
+        return ERR_NOT_READY;
+    }
+    return ERR_OK;
+}
+
 int32_t FPGA_Ctrl_ApplyResult(const SignalSeparationResult *res) {
     if (!res || res->valid_count <= 0) return -1;
 

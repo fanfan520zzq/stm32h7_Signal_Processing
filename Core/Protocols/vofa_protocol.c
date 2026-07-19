@@ -62,6 +62,14 @@ void VOFA_Poll(void) {
                 else if (strcmp(cmdbuf, "CMD:FPGA_SNAPSHOT") == 0) {
                     FPGA_Ctrl_PrintSnapshot();
                 }
+                else if (strcmp(cmdbuf, "CMD:FPGA_WAVE_BOTH,SINE") == 0) {
+                    int32_t result = FPGA_Ctrl_SetBothWave(FPGA_OUTPUT_WAVE_SINE);
+                    printf("ACK:FPGA_WAVE_BOTH wave=SINE result=%ld\r\n", (long)result);
+                }
+                else if (strcmp(cmdbuf, "CMD:FPGA_WAVE_BOTH,TRIANGLE") == 0) {
+                    int32_t result = FPGA_Ctrl_SetBothWave(FPGA_OUTPUT_WAVE_TRIANGLE);
+                    printf("ACK:FPGA_WAVE_BOTH wave=TRIANGLE result=%ld\r\n", (long)result);
+                }
                 else if (strncmp(cmdbuf, "CMD:FPGA_PROTOCOL_SELF_TEST", 27) == 0) {
                     unsigned long count = 1000UL;
                     (void)sscanf(&cmdbuf[27], ",%lu", &count);

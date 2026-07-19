@@ -70,10 +70,17 @@ typedef struct {
     uint32_t active_ftw_b;
 } FPGA_CommitReceipt_t;
 
+typedef enum {
+    FPGA_OUTPUT_WAVE_SINE = 0,
+    FPGA_OUTPUT_WAVE_TRIANGLE = 2
+} FPGA_OutputWave_t;
+
 int32_t FPGA_Ctrl_GetInfo(FPGA_Info_t *info);
 int32_t FPGA_Ctrl_AcquireSnapshot(FPGA_Snapshot_t *snapshot);
 int32_t FPGA_Ctrl_CommitDDSConfig(const FPGA_DDSConfig_t *config,
                                   FPGA_CommitReceipt_t *receipt);
+// Atomically change both FPGA DA waveform selectors while preserving each Vpp.
+int32_t FPGA_Ctrl_SetBothWave(FPGA_OutputWave_t wave_type);
 void FPGA_Ctrl_PrintInfo(void);
 void FPGA_Ctrl_PrintSnapshot(void);
 void FPGA_Ctrl_RunProtocolSelfTest(uint32_t count);

@@ -50,6 +50,19 @@ def run(port, baud, count):
             and "result=0" in info
         )
         checks.append({"name": "fpga_info", "ok": info_ok, "detail": info})
+        initial_error_match = re.search(r"protocol_errors=(\d+)", info or "")
+        initial_protocol_errors = int(initial_error_match.group(1)) if initial_error_match else None
+
+        sine = command(ser, "CMD:FPGA_WAVE_BOTH,SINE", "ACK:FPGA_WAVE_BOTH", 3.0, log)
+        triangle = command(ser, "CMD:FPGA_WAVE_BOTH,TRIANGLE", "ACK:FPGA_WAVE_BOTH", 3.0, log)
+        sine_restore = command(ser, "CMD:FPGA_WAVE_BOTH,SINE", "ACK:FPGA_WAVE_BOTH", 3.0, log)
+        wave_ok = bool(
+            sine and "wave=SINE result=0" in sine
+            and triangle and "wave=TRIANGLE result=0" in triangle
+            and sine_restore and "wave=SINE result=0" in sine_restore
+        )
+        checks.append({"name": "wave_both_roundtrip", "ok": wave_ok,
+                       "detail": [sine, triangle, sine_restore]})
 
         snapshot = command(ser, "CMD:FPGA_SNAPSHOT", "ACK:FPGA_SNAPSHOT", 3.0, log)
         snap_match = re.search(
@@ -92,6 +105,15 @@ def run(port, baud, count):
         ll_status = command(ser, "CMD:SPI_LL_STATUS", "ACK:SPI_LL_STATUS", 3.0, log)
         ll_ok = bool(ll_status and "timeouts=0 errors=0 pass=1" in ll_status)
         checks.append({"name": "ll_status", "ok": ll_ok, "detail": ll_status})
+
+        final_info = command(ser, "CMD:FPGA_INFO", "ACK:FPGA_INFO", 3.0, log)
+        final_error_match = re.search(r"protocol_errors=(\d+)", final_info or "")
+        final_protocol_errors = int(final_error_match.group(1)) if final_error_match else None
+        checks.append({"name": "protocol_errors_stable",
+                       "ok": initial_protocol_errors is not None and
+                             final_protocol_errors == initial_protocol_errors,
+                       "detail": {"before": initial_protocol_errors,
+                                  "after": final_protocol_errors}})
 
     passed = all(check["ok"] for check in checks)
     print(json.dumps({"status": "PASS" if passed else "FAIL", "checks": checks,
