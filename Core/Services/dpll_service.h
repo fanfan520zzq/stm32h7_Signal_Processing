@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 #include "adc_capture.h"
+#include "dpll_controller.h"
+
+typedef enum {
+    DPLL_MODE_STOPPED = 0,
+    DPLL_MODE_OPEN_LOOP,
+    DPLL_MODE_CLOSED_LOOP
+} DPLL_RunMode_t;
 
 typedef struct {
     uint32_t input_a_hz;
@@ -16,8 +23,14 @@ typedef struct {
     uint8_t configured;
     uint8_t running;
     uint8_t phase_valid;
+    DPLL_RunMode_t mode;
+    DPLL_ControllerState_t controller_state;
     uint32_t processed_frames;
     uint32_t rejected_frames;
+    uint32_t snapshot_failures;
+    uint32_t phase_failures;
+    uint32_t sequence_failures;
+    uint32_t commit_failures;
     uint32_t last_frame_sequence;
     uint16_t initial_config_sequence;
     uint16_t current_config_sequence;
@@ -27,11 +40,17 @@ typedef struct {
     uint32_t last_anchor_cycles;
     uint32_t last_anchor_uncertainty_cycles;
     uint32_t active_ftw_a;
+    uint32_t nominal_ftw_a;
+    uint8_t saturated;
+    uint8_t step_limited;
+    uint32_t injected_faults_remaining;
 } DPLL_Status_t;
 
 void DPLL_Service_Init(void);
 int32_t DPLL_Service_Configure(const DPLL_Config_t *config);
 int32_t DPLL_Service_StartOpenLoop(void);
+int32_t DPLL_Service_StartClosedLoop(void);
+void DPLL_Service_InjectFault(uint32_t sample_count);
 void DPLL_Service_Stop(void);
 uint8_t DPLL_Service_IsRunning(void);
 void DPLL_Service_ProcessFrame(const ADC_DualResult_t *capture);

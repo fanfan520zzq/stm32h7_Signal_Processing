@@ -82,9 +82,21 @@ int32_t SPI_Driver_TransmitReceive(uint8_t *pTxData, uint8_t *pRxData, uint16_t 
     LL_SPI_ClearFlag_MODF(SPI2);
     LL_SPI_SetTransferSize(SPI2, Size);
     LL_SPI_Enable(SPI2);
-    LL_SPI_StartMasterTransfer(SPI2);
 
     start = DWT->CYCCNT;
+    /* STM32H7 master mode can clock immediately after CSTART. Preload the TX FIFO
+       so cache/interrupt latency cannot create an underrun at the start of a frame. */
+    while (tx_count < Size && LL_SPI_IsActiveFlag_TXP(SPI2)) {
+        LL_SPI_TransmitData8(SPI2, pTxData[tx_count++]);
+    }
+    if (tx_count == 0U) {
+        SPI_Driver_LLClose();
+        spi_ll_timeout_count++;
+        return ERR_TIMEOUT;
+    }
+    LL_GPIO_ResetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
+    LL_SPI_StartMasterTransfer(SPI2);
+
     while (tx_count < Size || rx_count < Size) {
         if (tx_count < Size && LL_SPI_IsActiveFlag_TXP(SPI2)) {
             LL_SPI_TransmitData8(SPI2, pTxData[tx_count++]);
@@ -93,6 +105,7 @@ int32_t SPI_Driver_TransmitReceive(uint8_t *pTxData, uint8_t *pRxData, uint16_t 
             pRxData[rx_count++] = LL_SPI_ReceiveData8(SPI2);
         }
         if ((uint32_t)(DWT->CYCCNT - start) >= timeout_cycles) {
+            LL_GPIO_SetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
             SPI_Driver_LLClose();
             spi_ll_timeout_count++;
             return ERR_TIMEOUT;
@@ -101,6 +114,7 @@ int32_t SPI_Driver_TransmitReceive(uint8_t *pTxData, uint8_t *pRxData, uint16_t 
 
     while (!LL_SPI_IsActiveFlag_EOT(SPI2)) {
         if ((uint32_t)(DWT->CYCCNT - start) >= timeout_cycles) {
+            LL_GPIO_SetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
             SPI_Driver_LLClose();
             spi_ll_timeout_count++;
             return ERR_TIMEOUT;
@@ -109,6 +123,7 @@ int32_t SPI_Driver_TransmitReceive(uint8_t *pTxData, uint8_t *pRxData, uint16_t 
 
     if (LL_SPI_IsActiveFlag_UDR(SPI2) || LL_SPI_IsActiveFlag_OVR(SPI2) ||
         LL_SPI_IsActiveFlag_MODF(SPI2)) {
+        LL_GPIO_SetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
         SPI_Driver_LLClose();
         LL_SPI_ClearFlag_UDR(SPI2);
         LL_SPI_ClearFlag_OVR(SPI2);
@@ -117,6 +132,7 @@ int32_t SPI_Driver_TransmitReceive(uint8_t *pTxData, uint8_t *pRxData, uint16_t 
         return ERR_HARDWARE;
     }
 
+    LL_GPIO_SetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
     SPI_Driver_LLClose();
     spi_ll_transfer_count++;
     return ERR_OK;
@@ -130,9 +146,10 @@ void SPI_Driver_GetLLStats(uint32_t *transfers, uint32_t *timeouts, uint32_t *er
 
 int32_t SPI_Driver_TransferFrame(const uint8_t tx[4], uint8_t rx[4]) {
     if (tx == NULL || rx == NULL) return ERR_PARAM;
-    LL_GPIO_ResetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
     int32_t res = SPI_Driver_TransmitReceive((uint8_t *)tx, rx, 4U, 100U);
-    LL_GPIO_SetOutputPin(FPGA_CS_PORT, FPGA_CS_PIN);
+    if (primask == 0U) __enable_irq();
     SPI_Driver_WaitCycles(FPGA_CS_HIGH_HOLD_CYCLES);
     return res;
 }

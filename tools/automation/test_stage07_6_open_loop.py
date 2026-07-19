@@ -73,7 +73,7 @@ def run(port, baud):
 
         dpll_status = send(ser, "CMD:DPLL_STATUS", "ACK:DPLL_STATUS", 3.0, log)
         status_match = re.search(
-            r"configured=1 running=1 valid=1 processed=(\d+) rejected=(\d+).*"
+            r"configured=1 running=1 valid=1.*processed=(\d+) rejected=(\d+).*"
             r"seq_initial=(\d+) seq_current=(\d+) write_free=(\d+)",
             dpll_status or "",
         )

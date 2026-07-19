@@ -123,6 +123,17 @@ void VOFA_Poll(void) {
                     if (result == ERR_OK) App_SelectProfile(PROFILE_SPI_DPLL);
                     printf("ACK:DPLL_OPEN_LOOP_START result=%ld mode=OBSERVE_ONLY\r\n", (long)result);
                 }
+                else if (strcmp(cmdbuf, "CMD:DPLL_CLOSED_LOOP_START") == 0) {
+                    int32_t result = DPLL_Service_StartClosedLoop();
+                    if (result == ERR_OK) App_SelectProfile(PROFILE_SPI_DPLL);
+                    printf("ACK:DPLL_CLOSED_LOOP_START result=%ld mode=RAW_FTW_PI\r\n", (long)result);
+                }
+                else if (strncmp(cmdbuf, "CMD:DPLL_FAULT_INJECT,", 22) == 0) {
+                    unsigned long count = 0UL;
+                    (void)sscanf(&cmdbuf[22], "%lu", &count);
+                    DPLL_Service_InjectFault((uint32_t)count);
+                    printf("ACK:DPLL_FAULT_INJECT count=%lu result=0\r\n", count);
+                }
                 else if (strcmp(cmdbuf, "CMD:DPLL_OPEN_LOOP_STOP") == 0) {
                     DPLL_Service_Stop();
                     printf("ACK:DPLL_OPEN_LOOP_STOP result=0\r\n");

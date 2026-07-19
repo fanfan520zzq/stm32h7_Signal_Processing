@@ -63,6 +63,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Algorithms/measure.h
         Core/Algorithms/phase_bridge.c
         Core/Algorithms/phase_bridge.h
+        Core/Algorithms/dpll_controller.c
+        Core/Algorithms/dpll_controller.h
 
         Core/Features/dac_dds.c
         Core/Features/dac_dds.h
