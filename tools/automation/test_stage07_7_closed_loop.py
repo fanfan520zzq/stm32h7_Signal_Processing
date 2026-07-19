@@ -12,7 +12,7 @@ STATUS_RE = re.compile(
     r"configured=(?P<configured>\d+) running=(?P<running>\d+) valid=(?P<valid>\d+) "
     r"mode=(?P<mode>\d+) state=(?P<state>\w+).*processed=(?P<processed>\d+) "
     r"rejected=(?P<rejected>\d+).*uncertainty=(?P<uncertainty>\d+) "
-    r"nominal_ftw=0x(?P<nominal>[0-9A-Fa-f]+) ftw=0x(?P<ftw>[0-9A-Fa-f]+) "
+    r"nominal_ftw=0x(?P<nominal>[0-9A-Fa-f]+) ftw=0x(?P<ftw>[0-9A-Fa-f]+).*"
     r"seq_initial=(?P<seq_initial>\d+) seq_current=(?P<seq_current>\d+).*"
     r"faults=(?P<faults>\d+)"
 )

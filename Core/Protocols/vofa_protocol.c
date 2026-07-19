@@ -128,6 +128,20 @@ void VOFA_Poll(void) {
                     if (result == ERR_OK) App_SelectProfile(PROFILE_SPI_DPLL);
                     printf("ACK:DPLL_CLOSED_LOOP_START result=%ld mode=RAW_FTW_PI\r\n", (long)result);
                 }
+                else if (strcmp(cmdbuf, "CMD:DPLL_B_COMMON") == 0) {
+                    int32_t result = DPLL_Service_ConfigureBMode(DPLL_B_COMMON_PPM, 1U, 0U);
+                    printf("ACK:DPLL_B_COMMON result=%ld\r\n", (long)result);
+                }
+                else if (strncmp(cmdbuf, "CMD:DPLL_B_DERIVED,", 19) == 0) {
+                    unsigned long ratio = 0UL, phase = 0UL;
+                    int parsed = sscanf(&cmdbuf[19], "%lu,%lu", &ratio, &phase);
+                    int32_t result = (parsed == 2 && ratio <= 255UL && phase <= 65535UL)
+                        ? DPLL_Service_ConfigureBMode(DPLL_B_DERIVED_INTEGER,
+                                                     (uint8_t)ratio, (uint16_t)phase)
+                        : ERR_PARAM;
+                    printf("ACK:DPLL_B_DERIVED ratio=%lu phase_deg=%lu result=%ld\r\n",
+                           ratio, phase, (long)result);
+                }
                 else if (strncmp(cmdbuf, "CMD:DPLL_FAULT_INJECT,", 22) == 0) {
                     unsigned long count = 0UL;
                     (void)sscanf(&cmdbuf[22], "%lu", &count);

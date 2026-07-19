@@ -19,7 +19,11 @@ static uint32_t g_previous_anchor;
 static float g_previous_wrapped_error;
 static DPLL_Controller_t g_controller;
 static DPLL_ControllerConfig_t g_controller_config;
-static uint32_t g_fixed_ftw_b;
+static uint32_t g_nominal_ftw_b;
+static DPLL_BMode_t g_b_mode;
+static uint8_t g_b_ratio_n;
+static uint16_t g_b_phase_degrees;
+static uint32_t g_b_phase_offset;
 static uint32_t g_log_divider;
 
 static void DPLL_Service_RecordInvalidMeasurement(void) {
@@ -42,7 +46,11 @@ void DPLL_Service_Init(void) {
     g_previous_wrapped_error = 0.0f;
     memset(&g_controller, 0, sizeof(g_controller));
     memset(&g_controller_config, 0, sizeof(g_controller_config));
-    g_fixed_ftw_b = 0U;
+    g_nominal_ftw_b = 0U;
+    g_b_mode = DPLL_B_COMMON_PPM;
+    g_b_ratio_n = 1U;
+    g_b_phase_degrees = 0U;
+    g_b_phase_offset = 0U;
     g_log_divider = 0U;
 }
 
@@ -60,6 +68,33 @@ int32_t DPLL_Service_Configure(const DPLL_Config_t *config) {
     g_status.running = 0U;
     g_status.phase_valid = 0U;
     g_status.mode = DPLL_MODE_STOPPED;
+    g_b_mode = DPLL_B_COMMON_PPM;
+    g_b_ratio_n = 1U;
+    g_b_phase_degrees = 0U;
+    g_b_phase_offset = 0U;
+    return ERR_OK;
+}
+
+int32_t DPLL_Service_ConfigureBMode(DPLL_BMode_t mode, uint8_t ratio_n,
+                                    uint16_t phase_degrees) {
+    if (!g_status.configured || g_status.running) return ERR_NOT_READY;
+    if (mode == DPLL_B_COMMON_PPM) {
+        if (phase_degrees != 0U) return ERR_PARAM;
+        g_b_mode = mode;
+        g_b_ratio_n = 1U;
+        g_b_phase_degrees = 0U;
+        g_b_phase_offset = 0U;
+        return ERR_OK;
+    }
+    if (mode != DPLL_B_DERIVED_INTEGER ||
+        DPLL_B_ValidateDerived(g_config.input_a_hz, g_config.input_b_hz,
+                               ratio_n, phase_degrees) != 0 ||
+        DPLL_B_PhaseDegreesToU32(phase_degrees, &g_b_phase_offset) != 0) {
+        return ERR_PARAM;
+    }
+    g_b_mode = mode;
+    g_b_ratio_n = ratio_n;
+    g_b_phase_degrees = phase_degrees;
     return ERR_OK;
 }
 
@@ -100,13 +135,16 @@ int32_t DPLL_Service_StartClosedLoop(void) {
     const uint32_t nominal_ftw = (uint32_t)((
         ((uint64_t)g_config.input_a_hz << 32U) + (dds_clock_hz / 2U)) /
         dds_clock_hz);
+    const uint32_t nominal_ftw_b = (uint32_t)((
+        ((uint64_t)g_config.input_b_hz << 32U) + (dds_clock_hz / 2U)) /
+        dds_clock_hz);
 
     FPGA_DDSConfig_t raw = {
         nominal_ftw,
-        snapshot.active_ftw_b,
-        0U,
-        1U,
-        0U,
+        nominal_ftw_b,
+        g_b_phase_offset,
+        g_b_ratio_n,
+        g_b_mode == DPLL_B_DERIVED_INTEGER,
         1U
     };
     FPGA_CommitReceipt_t receipt;
@@ -129,7 +167,7 @@ int32_t DPLL_Service_StartClosedLoop(void) {
     if (g_controller_config.lost_samples < 10U) g_controller_config.lost_samples = 10U;
     if (DPLL_Controller_Init(&g_controller, &g_controller_config) != 0) return ERR_PARAM;
 
-    g_fixed_ftw_b = snapshot.active_ftw_b;
+    g_nominal_ftw_b = nominal_ftw_b;
     g_status.running = 1U;
     g_status.mode = DPLL_MODE_CLOSED_LOOP;
     g_status.controller_state = DPLL_STATE_ACQUIRE;
@@ -144,6 +182,11 @@ int32_t DPLL_Service_StartClosedLoop(void) {
     g_status.current_config_sequence = receipt.config_sequence;
     g_status.nominal_ftw_a = nominal_ftw;
     g_status.active_ftw_a = receipt.active_ftw_a;
+    g_status.nominal_ftw_b = nominal_ftw_b;
+    g_status.active_ftw_b = receipt.active_ftw_b;
+    g_status.b_mode = g_b_mode;
+    g_status.b_ratio_n = g_b_ratio_n;
+    g_status.b_phase_degrees = g_b_phase_degrees;
     g_status.saturated = 0U;
     g_status.step_limited = 0U;
     g_status.injected_faults_remaining = 0U;
@@ -240,6 +283,7 @@ void DPLL_Service_ProcessFrame(const ADC_DualResult_t *capture) {
     g_status.last_anchor_cycles = snapshot.local_anchor_cycles;
     g_status.last_anchor_uncertainty_cycles = snapshot.local_anchor_uncertainty_cycles;
     g_status.active_ftw_a = snapshot.active_ftw_a;
+    g_status.active_ftw_b = snapshot.active_ftw_b;
     g_status.phase_valid = 1U;
     g_status.processed_frames++;
 
@@ -255,12 +299,21 @@ void DPLL_Service_ProcessFrame(const ADC_DualResult_t *capture) {
         g_status.saturated = control.saturated;
         g_status.step_limited = control.step_limited;
         if (control.apply_ftw) {
+            uint32_t ftw_b = g_nominal_ftw_b;
+            if (g_b_mode == DPLL_B_COMMON_PPM &&
+                DPLL_B_CommonPpmFTW(g_controller_config.nominal_ftw,
+                                     g_nominal_ftw_b, control.ftw, &ftw_b) != 0) {
+                g_status.commit_failures++;
+                g_status.rejected_frames++;
+                g_status.phase_valid = 0U;
+                return;
+            }
             FPGA_DDSConfig_t raw = {
                 control.ftw,
-                g_fixed_ftw_b,
-                0U,
-                1U,
-                0U,
+                ftw_b,
+                g_b_phase_offset,
+                g_b_ratio_n,
+                g_b_mode == DPLL_B_DERIVED_INTEGER,
                 1U
             };
             FPGA_CommitReceipt_t receipt;
@@ -271,6 +324,7 @@ void DPLL_Service_ProcessFrame(const ADC_DualResult_t *capture) {
                 return;
             }
             g_status.active_ftw_a = receipt.active_ftw_a;
+            g_status.active_ftw_b = receipt.active_ftw_b;
             g_status.current_config_sequence = receipt.config_sequence;
         }
     }
@@ -297,7 +351,7 @@ void DPLL_Service_GetStatus(DPLL_Status_t *status) {
 }
 
 void DPLL_Service_PrintStatus(void) {
-    printf("ACK:DPLL_STATUS configured=%u running=%u valid=%u mode=%u state=%s processed=%lu rejected=%lu snapshot_fail=%lu phase_fail=%lu seq_fail=%lu commit_fail=%lu error=%.7f unwrapped=%.7f ppm=%.3f anchor=%lu uncertainty=%lu nominal_ftw=0x%08lX ftw=0x%08lX seq_initial=%u seq_current=%u write_free=%u saturated=%u slew=%u faults=%lu\r\n",
+    printf("ACK:DPLL_STATUS configured=%u running=%u valid=%u mode=%u state=%s processed=%lu rejected=%lu snapshot_fail=%lu phase_fail=%lu seq_fail=%lu commit_fail=%lu error=%.7f unwrapped=%.7f ppm=%.3f anchor=%lu uncertainty=%lu nominal_ftw=0x%08lX ftw=0x%08lX nominal_ftw_b=0x%08lX ftw_b=0x%08lX b_mode=%u b_ratio=%u b_phase_deg=%u seq_initial=%u seq_current=%u write_free=%u saturated=%u slew=%u faults=%lu\r\n",
            g_status.configured, g_status.running, g_status.phase_valid,
            (unsigned)g_status.mode, DPLL_Controller_StateName(g_status.controller_state),
            (unsigned long)g_status.processed_frames, (unsigned long)g_status.rejected_frames,
@@ -307,7 +361,10 @@ void DPLL_Service_PrintStatus(void) {
            (unsigned long)g_status.last_anchor_cycles,
            (unsigned long)g_status.last_anchor_uncertainty_cycles,
            (unsigned long)g_status.nominal_ftw_a,
-           (unsigned long)g_status.active_ftw_a, g_status.initial_config_sequence,
+           (unsigned long)g_status.active_ftw_a,
+           (unsigned long)g_status.nominal_ftw_b,
+           (unsigned long)g_status.active_ftw_b, (unsigned)g_status.b_mode,
+           g_status.b_ratio_n, g_status.b_phase_degrees, g_status.initial_config_sequence,
            g_status.current_config_sequence,
            (g_status.mode == DPLL_MODE_OPEN_LOOP &&
             g_status.initial_config_sequence == g_status.current_config_sequence) ? 1U : 0U,

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "adc_capture.h"
 #include "dpll_controller.h"
+#include "dpll_b_mode.h"
 
 typedef enum {
     DPLL_MODE_STOPPED = 0,
@@ -41,6 +42,11 @@ typedef struct {
     uint32_t last_anchor_uncertainty_cycles;
     uint32_t active_ftw_a;
     uint32_t nominal_ftw_a;
+    uint32_t active_ftw_b;
+    uint32_t nominal_ftw_b;
+    DPLL_BMode_t b_mode;
+    uint8_t b_ratio_n;
+    uint16_t b_phase_degrees;
     uint8_t saturated;
     uint8_t step_limited;
     uint32_t injected_faults_remaining;
@@ -50,6 +56,8 @@ void DPLL_Service_Init(void);
 int32_t DPLL_Service_Configure(const DPLL_Config_t *config);
 int32_t DPLL_Service_StartOpenLoop(void);
 int32_t DPLL_Service_StartClosedLoop(void);
+int32_t DPLL_Service_ConfigureBMode(DPLL_BMode_t mode, uint8_t ratio_n,
+                                    uint16_t phase_degrees);
 void DPLL_Service_InjectFault(uint32_t sample_count);
 void DPLL_Service_Stop(void);
 uint8_t DPLL_Service_IsRunning(void);
