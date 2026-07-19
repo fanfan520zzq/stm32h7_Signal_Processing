@@ -270,9 +270,9 @@ uint8_t FFT_Poll(void)
         }
 
         extern ProfileType_t current_profile;
-        if (current_profile == PROFILE_UART_DEBUG || current_profile == PROFILE_SIGNAL_ANALYSIS) {
+        if (current_profile == PROFILE_UART_DEBUG) {
             static uint32_t last_print = 0;
-            if (HAL_GetTick() - last_print >= 1000) {
+            if (HAL_GetTick() - last_print >= 5000U) {
                 last_print = HAL_GetTick();
                 /* Debug Print to UART (Restored for Python script parsing in Stage 8) */
                 printf("\r\n--- STAGE 8 SIGNAL ANALYSIS ---\r\n");

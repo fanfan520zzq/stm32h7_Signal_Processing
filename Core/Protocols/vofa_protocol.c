@@ -5,6 +5,7 @@
 #include "spi_driver.h"
 #include "timebase_driver.h"
 #include "dpll_service.h"
+#include "auto_run_service.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,8 +31,6 @@ void VOFA_Poll(void) {
         if (byte == '\n' || byte == '\r') {
             if (idx > 0) {
                 cmdbuf[idx] = '\0';
-                printf("LOG:DEBUG RX: '%s'\r\n", cmdbuf);
-                
                 // Parse CMD:DDS_SET,<wave>,<freq>,<vpp>,<bias>,<duty>
                 if (strncmp(cmdbuf, "CMD:DDS_SET,", 12) == 0) {
                     int wave, freq, vpp, bias, duty;
@@ -46,7 +45,6 @@ void VOFA_Poll(void) {
                 }
                 else if (strncmp(cmdbuf, "CMD:PING", 8) == 0) {
                     printf("ACK:PONG\r\n");
-                    printf("LOG:INFO Hello PC\r\n");
                 }
                 else if (strncmp(cmdbuf, "CMD:SPI_TEST", 12) == 0) {
                     extern volatile uint8_t trigger_spi_test;
@@ -162,6 +160,23 @@ void VOFA_Poll(void) {
                 }
                 else if (strcmp(cmdbuf, "CMD:DPLL_STATUS") == 0) {
                     DPLL_Service_PrintStatus();
+                }
+                else if (strncmp(cmdbuf, "CMD:AUTO_RUN_START,", 19) == 0) {
+                    unsigned long phase = 0UL;
+                    int parsed = sscanf(&cmdbuf[19], "%lu", &phase);
+                    int32_t result = (parsed == 1 && phase <= 65535UL)
+                        ? AutoRun_Service_Start((uint16_t)phase) : ERR_PARAM;
+                    if (result == ERR_OK) App_SelectProfile(PROFILE_SIGNAL_ANALYSIS);
+                    printf("ACK:AUTO_RUN_START phase_deg=%lu result=%ld\r\n",
+                           phase, (long)result);
+                }
+                else if (strcmp(cmdbuf, "CMD:AUTO_RUN_STATUS") == 0) {
+                    AutoRun_Service_PrintStatus();
+                }
+                else if (strcmp(cmdbuf, "CMD:AUTO_RUN_STOP") == 0) {
+                    AutoRun_Service_Stop();
+                    App_SelectProfile(PROFILE_SIGNAL_ANALYSIS);
+                    printf("ACK:AUTO_RUN_STOP result=0\r\n");
                 }
                 else if (strncmp(cmdbuf, "CMD:ADC_TEST", 12) == 0) {
                     int len = 1024;

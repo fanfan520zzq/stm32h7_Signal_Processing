@@ -25,6 +25,7 @@ static uint8_t g_b_ratio_n;
 static uint16_t g_b_phase_degrees;
 static uint32_t g_b_phase_offset;
 static uint32_t g_log_divider;
+static DPLL_ControllerState_t g_last_logged_state;
 
 static void DPLL_Service_RecordInvalidMeasurement(void) {
     g_status.rejected_frames++;
@@ -52,6 +53,7 @@ void DPLL_Service_Init(void) {
     g_b_phase_degrees = 0U;
     g_b_phase_offset = 0U;
     g_log_divider = 0U;
+    g_last_logged_state = DPLL_STATE_ACQUIRE;
 }
 
 int32_t DPLL_Service_Configure(const DPLL_Config_t *config) {
@@ -123,6 +125,7 @@ int32_t DPLL_Service_StartOpenLoop(void) {
     g_last_update_tick = 0U;
     g_previous_anchor = 0U;
     g_log_divider = 0U;
+    g_last_logged_state = DPLL_STATE_ACQUIRE;
     return ERR_OK;
 }
 
@@ -193,6 +196,7 @@ int32_t DPLL_Service_StartClosedLoop(void) {
     g_last_update_tick = 0U;
     g_previous_anchor = 0U;
     g_log_divider = 0U;
+    g_last_logged_state = DPLL_STATE_ACQUIRE;
     return ERR_OK;
 }
 
@@ -330,10 +334,11 @@ void DPLL_Service_ProcessFrame(const ADC_DualResult_t *capture) {
     }
 
     g_log_divider++;
-    uint32_t log_decimation = g_status.mode == DPLL_MODE_CLOSED_LOOP
-        ? (g_config.update_hz / 10U) : 1U;
+    uint32_t log_decimation = g_config.update_hz * 5U;
     if (log_decimation == 0U) log_decimation = 1U;
-    if ((g_log_divider % log_decimation) == 0U) {
+    uint8_t state_changed = g_status.controller_state != g_last_logged_state;
+    if (state_changed || (g_log_divider % log_decimation) == 0U) {
+        g_last_logged_state = g_status.controller_state;
         printf("LOG:INFO DPLL_%s frame=%lu state=%s error=%.7f unwrapped=%.7f ppm=%.3f anchor=%lu uncertainty=%lu ftw=0x%08lX seq=%u sat=%u slew=%u\r\n",
                g_status.mode == DPLL_MODE_CLOSED_LOOP ? "CLOSED_LOOP" : "OPEN_LOOP",
                (unsigned long)capture->frame_sequence,

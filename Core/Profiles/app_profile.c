@@ -15,6 +15,7 @@
 #include "dft_separate.h"
 #include "fpga_ctrl.h"
 #include "dpll_service.h"
+#include "auto_run_service.h"
 
 extern UART_HandleTypeDef huart1;
 
@@ -27,6 +28,7 @@ int32_t App_SelectProfile(ProfileType_t profile) {
 }
 
 void App_Init(void) {
+    AutoRun_Service_Init();
     printf("LOG:INFO Build: %s %s\r\n", __DATE__, __TIME__);
     if (current_profile == PROFILE_UART_DEBUG) {
         printf("LOG:INFO System Initialized. Profile: UART_DEBUG\r\n");
@@ -126,9 +128,14 @@ void App_Poll(void) {
             if (current_profile == PROFILE_SPI_DPLL) {
                 ADC_DualResult_t capture = ADC_Capture_GetResult();
                 DPLL_Service_ProcessFrame(&capture);
-            } else if (HAL_GetTick() - last_sep_time >= 1000) {
+            } else if (AutoRun_Service_NeedsAnalysis()) {
+                SignalSeparationResult sep = Execute_Signal_SeparationQuiet();
+                if (AutoRun_Service_ConsumeAnalysis(&sep) == ERR_OK) {
+                    App_SelectProfile(PROFILE_SPI_DPLL);
+                }
+            } else if (current_profile == PROFILE_UART_DEBUG &&
+                       HAL_GetTick() - last_sep_time >= 5000U) {
                 last_sep_time = HAL_GetTick();
-                printf("LOG:INFO Running Execute_Signal_Separation()...\r\n");
                 SignalSeparationResult sep = Execute_Signal_Separation();
                 if (sep.valid_count > 0) {
                     FPGA_Ctrl_ApplyResult(&sep);
@@ -142,6 +149,7 @@ void App_Poll(void) {
             fft_ready_flag = 0;
         }
         
+        AutoRun_Service_Poll();
         VOFA_Poll(); // ASCII 命令解析（PING/FPGA_STATUS 等），两个 profile 都需要
         if (current_profile == PROFILE_UART_DEBUG) {
             if (test_dds_flag) {
@@ -216,8 +224,5 @@ void App_Poll(void) {
         last_blink_time = HAL_GetTick();
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // Green LED
         
-        static int toggle = 0;
-        if (toggle) printf("HEARTBEAT: App_Poll is running\r\n");
-        toggle = !toggle;
     }
 }

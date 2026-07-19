@@ -59,6 +59,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Services/clock_service.h
         Core/Services/dpll_service.c
         Core/Services/dpll_service.h
+        Core/Services/auto_run_service.c
+        Core/Services/auto_run_service.h
         Core/Algorithms/measure.c
         Core/Algorithms/measure.h
         Core/Algorithms/phase_bridge.c

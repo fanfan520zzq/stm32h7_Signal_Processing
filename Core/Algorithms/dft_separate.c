@@ -159,7 +159,7 @@ SignalSeparationResult Separate_Signals(const float sweep_amps[57], const float 
 }
 
 // 顶层封装接口：一键完成扫描、分离、分类（内部保留了可开启的 printf 打印代码）
-SignalSeparationResult Execute_Signal_Separation(void) {
+static SignalSeparationResult Execute_Signal_SeparationImpl(uint8_t verbose) {
     float sweep_amps[57];
     float sweep_phases[57];
     
@@ -169,6 +169,8 @@ SignalSeparationResult Execute_Signal_Separation(void) {
     // 2. 核心分离分类
     SignalSeparationResult sep_res = Separate_Signals(sweep_amps, sweep_phases);
     
+    if (!verbose) return sep_res;
+
     extern volatile uint32_t dwt_total_cycles;
     printf("DEBUG DMA DWT Cycles: %lu (Expected for 2.5MSa/s: 384000 @ 480MHz)\n", dwt_total_cycles);
     
@@ -189,5 +191,13 @@ SignalSeparationResult Execute_Signal_Separation(void) {
     printf("================================\r\n\r\n");
     
     return sep_res;
+}
+
+SignalSeparationResult Execute_Signal_Separation(void) {
+    return Execute_Signal_SeparationImpl(1U);
+}
+
+SignalSeparationResult Execute_Signal_SeparationQuiet(void) {
+    return Execute_Signal_SeparationImpl(0U);
 }
 

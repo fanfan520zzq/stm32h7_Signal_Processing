@@ -37,4 +37,5 @@ SignalSeparationResult Separate_Signals(const float sweep_amps[57], const float 
 
 // 顶层封装接口：一键完成扫描、分离、分类（内部保留了可开启的 printf 打印代码）
 SignalSeparationResult Execute_Signal_Separation(void);
+SignalSeparationResult Execute_Signal_SeparationQuiet(void);
 #endif //IIT6_OSCILLISCOPE_2023H_SIGNAL_SEPERATE_H

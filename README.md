@@ -5,6 +5,8 @@
 > 基于 STM32H743VIT6，集成双通道示波器采集、DDS 信号发生器、FFT 频谱分析与谐波识别。
 > 采用 Profile 驱动的分层裸机架构，支持电赛现场快速功能重组。
 
+2023H 全链路学习入口：[`docs/architecture/2023h_full_signal_chain_guide.md`](docs/architecture/2023h_full_signal_chain_guide.md)
+
 ---
 
 ## 目录
@@ -183,6 +185,18 @@ CMD:DDS_SET,<wave>,<freq>,<vpp>,<bias>,<duty>\n
   CMD:DDS_SET,0,10000,3300,1650,50\n   → 10kHz 正弦波, 满摆幅
   CMD:DDS_SET,1,5000,2000,1650,30\n   → 5kHz 方波, 30% 占空比
 ```
+
+整机自动识别、重建和锁相由单条串口命令触发：
+
+```text
+CMD:AUTO_RUN_START,<phase_deg>  # 0~180，5度步进
+CMD:AUTO_RUN_STATUS
+CMD:AUTO_RUN_STOP
+```
+
+`phase_deg` 仅适用于两路均为正弦且 `fB/fA` 为整数的派生相位模式。其他
+频率/波形组合使用 `CMD:AUTO_RUN_START,0`，B 路自动采用公共 ppm 跟随。
+正常 Profile 空闲时不周期发送数据；DPLL 状态变化立即上报，稳态摘要每 5 秒一次。
 
 ---
 
