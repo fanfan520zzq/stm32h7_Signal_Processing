@@ -31,4 +31,49 @@ void FPGA_Ctrl_PrintStatus(void);
 // Cumulative SPI transaction error count (HAL errors + RX CRC failures)
 extern volatile uint32_t fpga_spi_err_count;
 
+typedef struct {
+    uint16_t id;
+    uint16_t protocol_version;
+    uint16_t capabilities;
+    uint16_t status;
+    uint16_t protocol_error_count;
+    uint16_t build_id;
+} FPGA_Info_t;
+
+typedef struct {
+    uint16_t sequence;
+    uint16_t status;
+    uint16_t protocol_error_count;
+    uint64_t sample_counter;
+    uint64_t apply_counter;
+    uint32_t phase_a;
+    uint32_t phase_b;
+    uint32_t active_ftw_a;
+    uint32_t active_ftw_b;
+} FPGA_Snapshot_t;
+
+typedef struct {
+    uint32_t ftw_a;
+    uint32_t ftw_b;
+    uint32_t phase_offset_b;
+    uint8_t ratio_n;
+    uint8_t derived_b_enable;
+    uint8_t raw_ftw_enable;
+} FPGA_DDSConfig_t;
+
+typedef struct {
+    uint16_t config_sequence;
+    uint64_t apply_counter;
+    uint32_t active_ftw_a;
+    uint32_t active_ftw_b;
+} FPGA_CommitReceipt_t;
+
+int32_t FPGA_Ctrl_GetInfo(FPGA_Info_t *info);
+int32_t FPGA_Ctrl_AcquireSnapshot(FPGA_Snapshot_t *snapshot);
+int32_t FPGA_Ctrl_CommitDDSConfig(const FPGA_DDSConfig_t *config,
+                                  FPGA_CommitReceipt_t *receipt);
+void FPGA_Ctrl_PrintInfo(void);
+void FPGA_Ctrl_PrintSnapshot(void);
+void FPGA_Ctrl_RunProtocolSelfTest(uint32_t count);
+
 #endif // FPGA_CTRL_H

@@ -11,6 +11,7 @@
 #include "fft_analysis.h"
 #include <stdlib.h>
 #include "spi_driver.h"
+#include "fpga_spi_protocol.h"
 #include "dft_separate.h"
 #include "fpga_ctrl.h"
 
@@ -180,8 +181,8 @@ void App_Poll(void) {
                 uint16_t test_val = (i * 137) & 0xFFFF; // random looking pattern
                 uint16_t readback = 0;
                 
-                SPI_Driver_WriteReg(0x01, test_val);
-                int32_t res = SPI_Driver_ReadReg(0x01, &readback);
+                FPGA_Protocol_Write16(FPGA_REG_TEST, test_val);
+                int32_t res = FPGA_Protocol_Read16(FPGA_REG_TEST, &readback);
                 
                 if (res == ERR_CRC) {
                     crc_err_count++;
@@ -191,7 +192,7 @@ void App_Poll(void) {
             }
             
             uint16_t fpga_id = 0;
-            int32_t spi_res = SPI_Driver_ReadReg(0x00, &fpga_id);
+            int32_t spi_res = FPGA_Protocol_Read16(FPGA_REG_ID, &fpga_id);
             
             printf("LOG:INFO SPI Test Done. Mismatches: %lu/1000, CRC Errs: %lu/1000. FPGA ID: 0x%04X (res=%ld)\r\n", err_count, crc_err_count, fpga_id, spi_res);
         }

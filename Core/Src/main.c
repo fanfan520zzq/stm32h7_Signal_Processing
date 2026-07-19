@@ -37,6 +37,7 @@
 #include "ad9833_hal.h"
 #include "adc_capture.h"
 #include "measure.h" // ADDED: include Measure for Goertzel functions
+#include "timebase_driver.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -146,6 +147,7 @@ int main(void)
   USART_Driver_Init(&huart3);
   
   setvbuf(stdout, NULL, _IONBF, 0);
+  Timebase_Driver_Init();
   printf("\r\n\r\n====== BOOTING ======\r\n");
   
   // Select and Initialize Profile
@@ -263,7 +265,10 @@ void PeriphCommonClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+    return len;
+}
 /* USER CODE END 4 */
 
  /* MPU Configuration */

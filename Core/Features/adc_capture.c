@@ -4,6 +4,7 @@
 #include <adc.h>
 #include "adc_capture.h"
 #include "tim.h"
+#include "timebase_driver.h"
 
 uint8_t start_adc_flag = 0;
 uint8_t fft_ready_flag = 0;
@@ -79,6 +80,10 @@ ADC_DualResult_t ADC_Capture_GetResult(void) {
 }
 
 void Start_Sample(void) {
+    HAL_TIM_Base_Stop(&htim4);
+    __HAL_TIM_SET_COUNTER(&htim4, 0U);
+    __HAL_TIM_CLEAR_FLAG(&htim4, TIM_FLAG_UPDATE);
+
     HAL_ADC_Stop_DMA(&hadc1);
     HAL_ADC_Stop_DMA(&hadc2);
 
@@ -89,5 +94,6 @@ void Start_Sample(void) {
     HAL_ADC_Start_DMA(&hadc2, (uint32_t*)CH2_Buffer, g_adc_len);
 
     // 【重要修复】：必须先让ADC进入等待触发状态，最后再开启定时器！
+    dwt_start_time = Timebase_Driver_Now();
     HAL_TIM_Base_Start(&htim4);
 }

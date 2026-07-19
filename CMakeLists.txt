@@ -80,6 +80,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Drivers/usart_driver.c
         Core/Drivers/spi_driver.c
         Core/Drivers/spi_driver.h
+        Core/Drivers/timebase_driver.c
+        Core/Drivers/timebase_driver.h
         Core/BSP/si5351/si5351.c
         Core/BSP/si5351/si5351.h
         Core/BSP/AD9833/ad9833_hal.c
@@ -87,6 +89,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Features/fpga_link/fpga_ctrl.c
         Core/Features/fpga_link/fpga_ctrl.h
         Core/Protocols/fpga_spi_protocol.h
+        Core/Protocols/fpga_spi_protocol.c
 )
 
 
