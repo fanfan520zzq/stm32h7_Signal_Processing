@@ -27,8 +27,11 @@ float Measure_RMS_ADC3(void);
 // Goertzel单频点幅值(Vpp)：buf为ADC原始码(0..65535)，N为采样点数。
 // f_sig为目标频率，f_sample为实际采样率(Hz)。
 float Goertzel_Vpp(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
-// Goertzel单频点相位：返回atan2(im,re)弧度
+// Goertzel递推原始相位。相对于第0样点的余弦相位存在固定 -omega 偏移。
 float Goertzel_Phase(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
+// DPLL使用的第0样点余弦相位：显式补偿Goertzel递推的 -omega 偏移。
+float Goertzel_PhaseAtSample0Cosine(const uint16_t *buf, uint32_t N,
+                                    float f_sig, float f_sample);
 // 直接DFT单频点幅值(Vpp)：用作Goertzel对照，参数含义同上。
 float DFT_Vpp_Direct(const uint16_t *buf, uint32_t N, float f_sig, float f_sample);
 // 计算RMS(去直流)；buf为ADC原始码，N为采样点数。

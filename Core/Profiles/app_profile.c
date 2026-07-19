@@ -14,6 +14,7 @@
 #include "fpga_spi_protocol.h"
 #include "dft_separate.h"
 #include "fpga_ctrl.h"
+#include "dpll_service.h"
 
 extern UART_HandleTypeDef huart1;
 
@@ -57,6 +58,14 @@ void App_Init(void) {
         FPGA_Ctrl_Init();
         
         // Signal analysis requires ADC capture
+        ADC_Capture_StartSingle(CLOCK_SRC_INTERNAL, 2500000, 2000);
+    }
+    else if (current_profile == PROFILE_SPI_DPLL) {
+        printf("LOG:INFO System Initialized. Profile: SPI_DPLL\r\n");
+        VOFA_Init();
+        Clock_Service_Init();
+        FPGA_Ctrl_Init();
+        DPLL_Service_Init();
         ADC_Capture_StartSingle(CLOCK_SRC_INTERNAL, 2500000, 2000);
     }
     else if (current_profile == PROFILE_ADC_VOFA) {
@@ -108,12 +117,16 @@ uint8_t g_is_adc_continuous = 1;
 extern void ADC_Poll(void);
 
 void App_Poll(void) {
-    if (current_profile == PROFILE_UART_DEBUG || current_profile == PROFILE_SIGNAL_ANALYSIS) {
+    if (current_profile == PROFILE_UART_DEBUG || current_profile == PROFILE_SIGNAL_ANALYSIS ||
+        current_profile == PROFILE_SPI_DPLL) {
         ADC_Poll();
         
         if (ADC_Capture_IsComplete()) {
             static uint32_t last_sep_time = 0;
-            if (HAL_GetTick() - last_sep_time >= 1000) {
+            if (current_profile == PROFILE_SPI_DPLL) {
+                ADC_DualResult_t capture = ADC_Capture_GetResult();
+                DPLL_Service_ProcessFrame(&capture);
+            } else if (HAL_GetTick() - last_sep_time >= 1000) {
                 last_sep_time = HAL_GetTick();
                 printf("LOG:INFO Running Execute_Signal_Separation()...\r\n");
                 SignalSeparationResult sep = Execute_Signal_Separation();

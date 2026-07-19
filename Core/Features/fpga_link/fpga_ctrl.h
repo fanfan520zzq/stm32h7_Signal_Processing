@@ -44,6 +44,8 @@ typedef struct {
     uint16_t sequence;
     uint16_t status;
     uint16_t protocol_error_count;
+    uint32_t local_anchor_cycles;
+    uint32_t local_anchor_uncertainty_cycles;
     uint64_t sample_counter;
     uint64_t apply_counter;
     uint32_t phase_a;

@@ -53,16 +53,19 @@ def run(port, baud, count):
 
         snapshot = command(ser, "CMD:FPGA_SNAPSHOT", "ACK:FPGA_SNAPSHOT", 3.0, log)
         snap_match = re.search(
-            r"seq=(\d+) sample=0x([0-9A-F]+) apply=0x([0-9A-F]+) phase_a=0x([0-9A-F]+) "
+            r"seq=(\d+) anchor=(\d+) uncertainty=(\d+) sample=0x([0-9A-F]+) "
+            r"apply=0x([0-9A-F]+) phase_a=0x([0-9A-F]+) "
             r"phase_b=0x([0-9A-F]+) ftw_a=0x([0-9A-F]+) ftw_b=0x([0-9A-F]+) "
             r"status=0x([0-9A-F]+) result=(-?\d+)",
             snapshot or "",
         )
         snapshot_ok = bool(
             snap_match
-            and int(snap_match.group(2), 16) > 0
-            and (int(snap_match.group(8), 16) & 0x2) != 0
-            and snap_match.group(9) == "0"
+            and int(snap_match.group(2)) > 0
+            and int(snap_match.group(3)) <= 256
+            and int(snap_match.group(4), 16) > 0
+            and (int(snap_match.group(10), 16) & 0x2) != 0
+            and snap_match.group(11) == "0"
         )
         checks.append({"name": "snapshot", "ok": snapshot_ok, "detail": snapshot})
 

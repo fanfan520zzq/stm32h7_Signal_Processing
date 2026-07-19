@@ -12,7 +12,8 @@ typedef enum {
     PROFILE_ADC_VOFA,
     PROFILE_DAC_DDS,
     PROFILE_SIGNAL_ANALYSIS,
-    PROFILE_SPI_TEST
+    PROFILE_SPI_TEST,
+    PROFILE_SPI_DPLL
 } ProfileType_t;
 
 /**

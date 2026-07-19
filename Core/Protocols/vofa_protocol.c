@@ -4,6 +4,7 @@
 #include "fpga_ctrl.h"
 #include "spi_driver.h"
 #include "timebase_driver.h"
+#include "dpll_service.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,6 +105,30 @@ void VOFA_Poll(void) {
                     printf("ACK:SPI_LL_STATUS transport=LL_POLL transfers=%lu timeouts=%lu errors=%lu pass=%u\r\n",
                            (unsigned long)transfers, (unsigned long)timeouts,
                            (unsigned long)errors, (timeouts == 0U && errors == 0U) ? 1U : 0U);
+                }
+                else if (strncmp(cmdbuf, "CMD:DPLL_CONFIG,", 16) == 0) {
+                    unsigned long fa = 0UL, fb = 0UL, update = 0UL;
+                    DPLL_Config_t config = {0};
+                    int parsed = sscanf(&cmdbuf[16], "%lu,%lu,%lu", &fa, &fb, &update);
+                    config.input_a_hz = (uint32_t)fa;
+                    config.input_b_hz = (uint32_t)fb;
+                    config.update_hz = (uint32_t)update;
+                    config.max_anchor_uncertainty_cycles = 256U;
+                    int32_t result = (parsed == 3) ? DPLL_Service_Configure(&config) : ERR_PARAM;
+                    printf("ACK:DPLL_CONFIG fa=%lu fb=%lu update=%lu result=%ld\r\n",
+                           fa, fb, update, (long)result);
+                }
+                else if (strcmp(cmdbuf, "CMD:DPLL_OPEN_LOOP_START") == 0) {
+                    int32_t result = DPLL_Service_StartOpenLoop();
+                    if (result == ERR_OK) App_SelectProfile(PROFILE_SPI_DPLL);
+                    printf("ACK:DPLL_OPEN_LOOP_START result=%ld mode=OBSERVE_ONLY\r\n", (long)result);
+                }
+                else if (strcmp(cmdbuf, "CMD:DPLL_OPEN_LOOP_STOP") == 0) {
+                    DPLL_Service_Stop();
+                    printf("ACK:DPLL_OPEN_LOOP_STOP result=0\r\n");
+                }
+                else if (strcmp(cmdbuf, "CMD:DPLL_STATUS") == 0) {
+                    DPLL_Service_PrintStatus();
                 }
                 else if (strncmp(cmdbuf, "CMD:ADC_TEST", 12) == 0) {
                     int len = 1024;

@@ -38,6 +38,7 @@
 #include "adc_capture.h"
 #include "measure.h" // ADDED: include Measure for Goertzel functions
 #include "timebase_driver.h"
+#include "dpll_service.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -148,6 +149,7 @@ int main(void)
   
   setvbuf(stdout, NULL, _IONBF, 0);
   Timebase_Driver_Init();
+  DPLL_Service_Init();
   printf("\r\n\r\n====== BOOTING ======\r\n");
   
   // Select and Initialize Profile

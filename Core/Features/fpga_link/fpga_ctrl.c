@@ -173,6 +173,10 @@ int32_t FPGA_Ctrl_AcquireSnapshot(FPGA_Snapshot_t *snapshot) {
         fpga_spi_err_count++;
         return ERR_HARDWARE;
     }
+    snapshot->local_anchor_cycles = anchor.envelope_start +
+        ((anchor.cs_low_observed - anchor.envelope_start) / 2U);
+    snapshot->local_anchor_uncertainty_cycles =
+        anchor.cs_low_observed - anchor.envelope_start;
     if (fpga_rd(FPGA_REG_STATUS, &snapshot->status) != ERR_OK ||
         fpga_rd(FPGA_REG_SNAP_SEQ, &snapshot->sequence) != ERR_OK ||
         fpga_rd(FPGA_REG_ERROR_COUNT, &snapshot->protocol_error_count) != ERR_OK ||
@@ -241,8 +245,10 @@ void FPGA_Ctrl_PrintInfo(void) {
 void FPGA_Ctrl_PrintSnapshot(void) {
     FPGA_Snapshot_t snapshot = {0};
     int32_t result = FPGA_Ctrl_AcquireSnapshot(&snapshot);
-    printf("ACK:FPGA_SNAPSHOT seq=%u sample=0x%08lX%08lX apply=0x%08lX%08lX phase_a=0x%08lX phase_b=0x%08lX ftw_a=0x%08lX ftw_b=0x%08lX status=0x%04X result=%ld\r\n",
+    printf("ACK:FPGA_SNAPSHOT seq=%u anchor=%lu uncertainty=%lu sample=0x%08lX%08lX apply=0x%08lX%08lX phase_a=0x%08lX phase_b=0x%08lX ftw_a=0x%08lX ftw_b=0x%08lX status=0x%04X result=%ld\r\n",
            snapshot.sequence,
+           (unsigned long)snapshot.local_anchor_cycles,
+           (unsigned long)snapshot.local_anchor_uncertainty_cycles,
            (unsigned long)(snapshot.sample_counter >> 32U),
            (unsigned long)snapshot.sample_counter,
            (unsigned long)(snapshot.apply_counter >> 32U),

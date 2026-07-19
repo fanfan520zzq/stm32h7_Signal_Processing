@@ -11,6 +11,7 @@
 
 
 #include <stdio.h>
+#include "phase_bridge.h"
 
 // TODO: 根据实际参考电压和ADC分辨率修改
 #define ADC_TO_VOLT   (3.3f / 65535.0f)
@@ -139,6 +140,12 @@ float Goertzel_Phase(const uint16_t *buf, uint32_t N, float f_sig, float f_sampl
     float re = s1 - s2 * cosf(omega);
     float im = s2 * sinf(omega);
     return atan2f(im, re);
+}
+
+float Goertzel_PhaseAtSample0Cosine(const uint16_t *buf, uint32_t N,
+                                    float f_sig, float f_sample) {
+    return PhaseBridge_GoertzelToSample0Cosine(
+        Goertzel_Phase(buf, N, f_sig, f_sample), f_sig, f_sample);
 }
 
 static float Goertzel_Vpp_Hann(const uint16_t *buf, uint32_t N, float f_sig, float f_sample)

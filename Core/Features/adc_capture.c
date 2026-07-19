@@ -10,6 +10,8 @@ uint8_t start_adc_flag = 0;
 uint8_t fft_ready_flag = 0;
 
 static volatile uint32_t g_adc_len = LEN;
+static volatile uint32_t g_adc_actual_sample_rate_hz = 0U;
+static volatile uint32_t g_adc_frame_sequence = 0U;
 
 static volatile uint8_t adc1_ready = 0;
 static volatile uint8_t adc2_ready = 0;
@@ -63,6 +65,7 @@ void ADC_Capture_StartSingle(ClockSource_t src, uint32_t target_hz, uint32_t len
 
     uint32_t actual_hz = 0;
     Clock_Service_SetADCFreq(src, target_hz, &actual_hz);
+    g_adc_actual_sample_rate_hz = actual_hz;
 
     Start_Sample();
 }
@@ -76,6 +79,9 @@ ADC_DualResult_t ADC_Capture_GetResult(void) {
     result.ch1 = CH1_Buffer;
     result.ch2 = CH2_Buffer;
     result.length = g_adc_len;
+    result.adc_t0_cycles = dwt_start_time;
+    result.actual_sample_rate_hz = g_adc_actual_sample_rate_hz;
+    result.frame_sequence = g_adc_frame_sequence;
     return result;
 }
 
@@ -95,5 +101,6 @@ void Start_Sample(void) {
 
     // 【重要修复】：必须先让ADC进入等待触发状态，最后再开启定时器！
     dwt_start_time = Timebase_Driver_Now();
+    g_adc_frame_sequence++;
     HAL_TIM_Base_Start(&htim4);
 }

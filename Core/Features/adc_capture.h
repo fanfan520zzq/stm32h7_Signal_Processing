@@ -14,6 +14,9 @@ typedef struct {
     const uint16_t *ch1;
     const uint16_t *ch2;
     uint32_t length;
+    uint32_t adc_t0_cycles;
+    uint32_t actual_sample_rate_hz;
+    uint32_t frame_sequence;
 } ADC_DualResult_t;
 
 extern uint16_t CH1_Buffer[LEN];
